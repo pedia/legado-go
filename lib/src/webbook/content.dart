@@ -1,5 +1,6 @@
 import '../analyzer/analyzer.dart';
 import '../analyzer/regex.dart';
+import '../analyzer/sync_http_bridge.dart';
 import '../analyzeurl/analyzeurl.dart';
 import '../model/booksource.dart';
 import '../model/chapter.dart';
@@ -12,38 +13,40 @@ Future<String> getContent(
   Novel novel,
   BookChapter chapter, [
   JsPool? jsPool,
-]) async {
-  if (chapter.url.isEmpty) {
-    return '';
-  }
-
-  final contentParts = <String>[];
-  final visited = <String>{};
-  const maxPages = 10;
-
-  var currentUrl = chapter.url;
-  for (var i = 0; i < maxPages; i++) {
-    if (currentUrl.isEmpty || !visited.add(currentUrl)) {
-      break;
+]) {
+  return withSyncHttpBridge(() async {
+    if (chapter.url.isEmpty) {
+      return '';
     }
 
-    try {
-      final (:content, :nextUrl) = await _parseContentPage(
-        source,
-        currentUrl,
-        jsPool,
-      );
-      if (content.isNotEmpty) {
-        contentParts.add(content);
+    final contentParts = <String>[];
+    final visited = <String>{};
+    const maxPages = 10;
+
+    var currentUrl = chapter.url;
+    for (var i = 0; i < maxPages; i++) {
+      if (currentUrl.isEmpty || !visited.add(currentUrl)) {
+        break;
       }
-      currentUrl = nextUrl;
-    } catch (_) {
-      if (i == 0) rethrow;
-      break;
-    }
-  }
 
-  return contentParts.join('\n');
+      try {
+        final (:content, :nextUrl) = await _parseContentPage(
+          source,
+          currentUrl,
+          jsPool,
+        );
+        if (content.isNotEmpty) {
+          contentParts.add(content);
+        }
+        currentUrl = nextUrl;
+      } catch (_) {
+        if (i == 0) rethrow;
+        break;
+      }
+    }
+
+    return contentParts.join('\n');
+  });
 }
 
 Future<({String content, String nextUrl})> _parseContentPage(

@@ -2,10 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:charset/charset.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:js_interpreter/js_interpreter.dart';
 
 import '../analyzer/analyzer.dart';
 import '../analyzer/legado_stub.dart';
+import '../analyzer/sync_http_bridge.dart';
 
 final RegExp _pagePattern = RegExp(r'\{\{page(?:\|(\d+(?:,\d+)*))?\}\}');
 final RegExp _keyPattern = RegExp(r'\{\{key\}\}');
@@ -457,55 +460,58 @@ class AnalyzeUrl {
     }
   }
 
-  /// Sends the HTTP request and returns the response body as a string.
+  /// Sends the HTTP request using `package:http` (`IOClient`) and returns
+  /// the response body decoded according to [charset] (or hex when [type] is set).
   Future<String> getStrResponse([JsPool? customPool]) async {
     if (jsCode.isNotEmpty) {
-      _resolveJS(customPool);
+      await withSyncHttpBridge(() async {
+        _resolveJS(customPool);
+      });
     }
     if (finalUrl.trim().isEmpty) {
       throw StateError('empty final url after analyzing rule "$ruleUrl"');
     }
 
-    final client = _createHttpClient();
+    final client = IOClient(_createHttpClient());
     try {
       final attempts = (retry + 1) < 1 ? 1 : (retry + 1);
-      HttpClientResponse? response;
+      http.StreamedResponse? response;
       Object? lastError;
 
       for (var i = 0; i < attempts; i++) {
         try {
           final uri = Uri.parse(finalUrl);
-          final req = await client.openUrl(method, uri);
-          req.followRedirects = true;
-          req.maxRedirects = 10;
+          final req = http.Request(method, uri)
+            ..followRedirects = true
+            ..maxRedirects = 10;
 
           if (method == 'POST') {
             final reqBytes = encodedRequestBodyBytes();
             if (!headerMap.keys.any((k) => k.toLowerCase() == 'content-type') &&
                 body.isNotEmpty) {
               if (_isJsonStr(body)) {
-                req.headers.set('Content-Type', 'application/json');
+                req.headers['Content-Type'] = 'application/json';
               } else if (_isXmlStr(body)) {
-                req.headers.set('Content-Type', 'application/xml');
+                req.headers['Content-Type'] = 'application/xml';
               } else {
-                req.headers.set(
-                  'Content-Type',
-                  'application/x-www-form-urlencoded',
-                );
+                req.headers['Content-Type'] =
+                    'application/x-www-form-urlencoded';
               }
             }
-            headerMap.forEach((k, v) => req.headers.set(k, v));
-            req.add(reqBytes);
+            headerMap.forEach((k, v) => req.headers[k] = v);
+            req.bodyBytes = reqBytes;
           } else {
-            headerMap.forEach((k, v) => req.headers.set(k, v));
+            headerMap.forEach((k, v) => req.headers[k] = v);
           }
 
-          final resp = await req.close().timeout(const Duration(seconds: 30));
+          final resp = await client
+              .send(req)
+              .timeout(const Duration(seconds: 30));
           if (resp.statusCode < 500 || i == attempts - 1) {
             response = resp;
             break;
           }
-          await resp.drain<void>();
+          await resp.stream.drain<void>();
         } catch (e) {
           lastError = e;
           if (i == attempts - 1) rethrow;
@@ -517,17 +523,14 @@ class AnalyzeUrl {
       }
 
       if (response.statusCode != HttpStatus.ok) {
-        await response.drain<void>();
+        await response.stream.drain<void>();
         throw HttpException(
-          'HTTP ${response.statusCode}: ${response.reasonPhrase}',
+          'HTTP ${response.statusCode}: ${response.reasonPhrase ?? ''}',
           uri: Uri.parse(finalUrl),
         );
       }
 
-      final bytes = await response.fold<List<int>>(
-        <int>[],
-        (prev, chunk) => prev..addAll(chunk),
-      );
+      final bytes = await response.stream.toBytes();
 
       if (type.isNotEmpty) {
         return _bytesToHex(bytes);
@@ -540,7 +543,7 @@ class AnalyzeUrl {
       }
       return utf8.decode(bytes, allowMalformed: true);
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 

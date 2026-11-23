@@ -13,6 +13,7 @@ export 'src/analyzer/jsonpath.dart';
 export 'src/analyzer/legado_stub.dart';
 export 'src/analyzer/regex.dart';
 export 'src/analyzer/source_rule.dart';
+export 'src/analyzer/sync_http_bridge.dart';
 export 'src/analyzer/xpath.dart';
 export 'src/analyzeurl/analyzeurl.dart';
 export 'src/compare/cli_compare.dart';

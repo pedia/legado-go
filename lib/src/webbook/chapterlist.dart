@@ -1,4 +1,5 @@
 import '../analyzer/analyzer.dart';
+import '../analyzer/sync_http_bridge.dart';
 import '../analyzeurl/analyzeurl.dart';
 import '../model/booksource.dart';
 import '../model/chapter.dart';
@@ -10,36 +11,38 @@ Future<List<BookChapter>> getChapterList(
   BookSource source,
   Novel novel, [
   JsPool? jsPool,
-]) async {
-  var tocUrl = novel.tocUrl.isNotEmpty ? novel.tocUrl : novel.bookUrl;
+]) {
+  return withSyncHttpBridge(() async {
+    var tocUrl = novel.tocUrl.isNotEmpty ? novel.tocUrl : novel.bookUrl;
 
-  final allChapters = <BookChapter>[];
-  final visited = <String>{};
-  const maxPages = 20;
+    final allChapters = <BookChapter>[];
+    final visited = <String>{};
+    const maxPages = 20;
 
-  for (var i = 0; i < maxPages; i++) {
-    if (tocUrl.isEmpty || !visited.add(tocUrl)) {
-      break;
+    for (var i = 0; i < maxPages; i++) {
+      if (tocUrl.isEmpty || !visited.add(tocUrl)) {
+        break;
+      }
+
+      try {
+        final (:chapters, :nextUrl) = await _parseChapterPage(
+          source,
+          tocUrl,
+          jsPool,
+        );
+        allChapters.addAll(chapters);
+        tocUrl = nextUrl;
+      } catch (_) {
+        if (i == 0) rethrow;
+        break;
+      }
     }
 
-    try {
-      final (:chapters, :nextUrl) = await _parseChapterPage(
-        source,
-        tocUrl,
-        jsPool,
-      );
-      allChapters.addAll(chapters);
-      tocUrl = nextUrl;
-    } catch (_) {
-      if (i == 0) rethrow;
-      break;
-    }
-  }
-
-  return [
-    for (var i = 0; i < allChapters.length; i++)
-      allChapters[i].copyWith(index: i, bookUrl: novel.bookUrl),
-  ];
+    return [
+      for (var i = 0; i < allChapters.length; i++)
+        allChapters[i].copyWith(index: i, bookUrl: novel.bookUrl),
+    ];
+  });
 }
 
 Future<({List<BookChapter> chapters, String nextUrl})> _parseChapterPage(

@@ -1,10 +1,10 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:js_interpreter/js_interpreter.dart';
 
 import 'css.dart';
+import 'sync_http_bridge.dart';
 
 const String legadoStubJS = r'''
 var java = {
@@ -30,10 +30,10 @@ var java = {
   s2t: function(s) { return s; },
   t2s: function(s) { return s; },
   ajax: function(url) { return __legado_ajax(String(url)); },
-  connect: function(url) { return __legado_make_response(__legado_request("GET", String(url), "", "{}")); },
-  get: function(url, headers) { return __legado_make_response(__legado_request("GET", String(url), "", JSON.stringify(headers || {}))); },
-  post: function(url, body, headers) { return __legado_make_response(__legado_request("POST", String(url), String(body || ""), JSON.stringify(headers || {}))); },
-  head: function(url, headers) { return __legado_make_response(__legado_request("HEAD", String(url), "", JSON.stringify(headers || {}))); },
+  connect: function(url) { return __legado_make_response(__legado_request("GET", String(url), "", "{}", true)); },
+  get: function(url, headers) { return __legado_make_response(__legado_request("GET", String(url), "", JSON.stringify(headers || {}), false)); },
+  post: function(url, body, headers) { return __legado_make_response(__legado_request("POST", String(url), String(body || ""), JSON.stringify(headers || {}), false)); },
+  head: function(url, headers) { return __legado_make_response(__legado_request("HEAD", String(url), "", JSON.stringify(headers || {}), false)); },
   setContent: function(html) { this._content = html; },
   getContent: function() { return this._content; },
   getElements: function(path) { return []; },
@@ -104,30 +104,6 @@ function getSortValue(item, st) { return item[st] || 0; }
 
 final Map<String, String> _jsCache = {};
 
-class JsHttpResponse {
-  final String body;
-  final int code;
-  final String status;
-  final String url;
-  final Map<String, String> headers;
-
-  const JsHttpResponse({
-    this.body = '',
-    this.code = 0,
-    this.status = '',
-    this.url = '',
-    this.headers = const {},
-  });
-
-  Map<String, dynamic> toJson() => {
-    'body': body,
-    'code': code,
-    'status': status,
-    'url': url,
-    'headers': headers,
-  };
-}
-
 /// Injects Legado API stubs and host-backed functions into [interpreter].
 void injectLegadoStubs(JSInterpreter interpreter) {
   interpreter.registerGlobal(
@@ -151,12 +127,13 @@ void injectLegadoStubs(JSInterpreter interpreter) {
         final urlStr = args.length > 1 ? args[1].toString() : '';
         final body = args.length > 2 ? args[2].toString() : '';
         final headersJson = args.length > 3 ? args[3].toString() : '{}';
+        final followRedirect = args.length > 4 && args[4].toBoolean();
         final resp = _doLegadoRequest(
           method,
           urlStr,
           body,
           _parseHeadersJson(headersJson),
-          false,
+          followRedirect,
         );
         return JSValueFactory.string(jsonEncode(resp.toJson()));
       },
@@ -267,13 +244,11 @@ void injectLegadoStubs(JSInterpreter interpreter) {
         final content = _readJsContent(interpreter);
         if (content.isEmpty) return JSValueFactory.array([]);
 
-        final selectors = rule.split('||');
-        final allResults = <String>[];
-        for (var sel in selectors) {
-          sel = sel.trim();
-          if (sel.isEmpty) continue;
-          allResults.addAll(cssGetElementList(sel, content, ''));
-        }
+        final allResults = <String>[
+          for (final sel in rule.split('||'))
+            if (sel.trim().isNotEmpty)
+              ...cssGetElementList(sel.trim(), content),
+        ];
         return JSValueFactory.array(
           allResults.map(JSValueFactory.string).toList(),
         );
@@ -290,7 +265,7 @@ void injectLegadoStubs(JSInterpreter interpreter) {
         final rule = args[0].toString();
         final content = _readJsContent(interpreter);
         if (content.isEmpty) return JSValueFactory.string('');
-        return JSValueFactory.string(cssGetString(rule, content, ''));
+        return JSValueFactory.string(cssGetString(rule, content));
       },
     ),
   );
@@ -323,7 +298,7 @@ String _readJsContent(JSInterpreter interpreter) {
 String _doLegadoAjax(String urlStr) {
   final parsed = _parseJSURL(urlStr);
   final resp = _doLegadoRequest(
-    parsed.method,
+    parsed.method.isEmpty ? 'GET' : parsed.method,
     parsed.target,
     parsed.body,
     parsed.headers,
@@ -365,7 +340,7 @@ JsHttpResponse _doLegadoRequest(
     effHeaders['Content-Type'] = 'application/x-www-form-urlencoded';
   }
 
-  return _syncHttpRequest(
+  return syncHttpRequest(
     method: effMethod,
     url: targetUrl,
     body: effBody,
@@ -374,218 +349,13 @@ JsHttpResponse _doLegadoRequest(
   );
 }
 
-JsHttpResponse _syncHttpRequest({
-  required String method,
-  required String url,
-  required String body,
-  required Map<String, String> headers,
-  required bool followRedirect,
-}) {
-  final tempDir = Directory.systemTemp.createTempSync('gopro_sync_http_');
-  final headerFile = File('${tempDir.path}/headers.txt');
-  try {
-    final args = <String>[
-      '-sS',
-      '-k',
-      '--max-time',
-      '15',
-      '-X',
-      method,
-      '-D',
-      headerFile.path,
-      '-w',
-      '\n%{http_code}\n%{url_effective}',
-    ];
-    if (followRedirect) {
-      args.add('-L');
-    }
-    if (method == 'HEAD') {
-      args.add('-I');
-    }
-    for (final entry in headers.entries) {
-      args.addAll(['-H', '${entry.key}: ${entry.value}']);
-    }
-    if (method == 'POST' && body.isNotEmpty) {
-      args.addAll(['--data-raw', body]);
-    }
-    args.add(url);
-
-    final result = Process.runSync('curl', args, stdoutEncoding: null);
-    if (result.exitCode != 0 && !headerFile.existsSync()) {
-      return _syncHttpWithDartSubprocess(
-        method: method,
-        url: url,
-        body: body,
-        headers: headers,
-        followRedirect: followRedirect,
-      );
-    }
-
-    final rawOut = result.stdout is List<int>
-        ? result.stdout as List<int>
-        : utf8.encode(result.stdout.toString());
-    final outText = utf8.decode(rawOut, allowMalformed: true);
-    final lines = outText.split('\n');
-    var effectiveUrl = url;
-    var code = 0;
-    var responseBody = outText;
-    if (lines.length >= 3) {
-      effectiveUrl = lines.last.trim();
-      code = int.tryParse(lines[lines.length - 2].trim()) ?? 0;
-      responseBody = lines.sublist(0, lines.length - 2).join('\n');
-    }
-
-    final respHeaders = <String, String>{};
-    var statusText = code > 0 ? '$code' : result.stderr.toString();
-    if (headerFile.existsSync()) {
-      final headerContent = headerFile.readAsStringSync();
-      // If redirects occurred, take the final header block.
-      final blocks = headerContent.trim().split(RegExp(r'\r?\n\r?\n'));
-      final lastBlock = blocks.isNotEmpty ? blocks.last : '';
-      final headerLines = lastBlock.split(RegExp(r'\r?\n'));
-      if (headerLines.isNotEmpty) {
-        statusText = headerLines.first.trim();
-      }
-      for (final line in headerLines.skip(1)) {
-        final colon = line.indexOf(':');
-        if (colon > 0) {
-          final k = line.substring(0, colon).trim();
-          final v = line.substring(colon + 1).trim();
-          respHeaders[k.toLowerCase()] = v;
-          respHeaders[k] = v;
-        }
-      }
-    }
-
-    return JsHttpResponse(
-      body: method == 'HEAD' ? '' : responseBody,
-      code: code,
-      status: statusText,
-      url: effectiveUrl.isEmpty ? url : effectiveUrl,
-      headers: respHeaders,
-    );
-  } on ProcessException {
-    return _syncHttpWithDartSubprocess(
-      method: method,
-      url: url,
-      body: body,
-      headers: headers,
-      followRedirect: followRedirect,
-    );
-  } finally {
-    try {
-      tempDir.deleteSync(recursive: true);
-    } catch (_) {}
-  }
-}
-
-JsHttpResponse _syncHttpWithDartSubprocess({
-  required String method,
-  required String url,
-  required String body,
-  required Map<String, String> headers,
-  required bool followRedirect,
-}) {
-  final tempDir = Directory.systemTemp.createTempSync('gopro_dart_http_');
-  final scriptFile = File('${tempDir.path}/fetch.dart');
-  try {
-    scriptFile.writeAsStringSync('''
-import 'dart:convert';
-import 'dart:io';
-
-Future<void> main() async {
-  final cfg = jsonDecode(Platform.environment['GOPRO_HTTP_REQ']!) as Map<String, dynamic>;
-  final client = HttpClient()
-    ..badCertificateCallback = (_, _, _) => true
-    ..connectionTimeout = const Duration(seconds: 15);
-  try {
-    final uri = Uri.parse(cfg['url'] as String);
-    final req = await client.openUrl(cfg['method'] as String, uri);
-    req.followRedirects = cfg['followRedirect'] as bool;
-    final headers = (cfg['headers'] as Map).cast<String, dynamic>();
-    headers.forEach((k, v) => req.headers.set(k, v.toString()));
-    final body = cfg['body'] as String;
-    if (cfg['method'] == 'POST' && body.isNotEmpty) {
-      req.write(body);
-    }
-    final resp = await req.close().timeout(const Duration(seconds: 15));
-    final bytes = await resp.fold<List<int>>([], (a, b) => a..addAll(b));
-    final outHeaders = <String, String>{};
-    resp.headers.forEach((name, values) {
-      if (values.isNotEmpty) {
-        outHeaders[name.toLowerCase()] = values.first;
-        outHeaders[name] = values.first;
-      }
-    });
-    stdout.write(jsonEncode({
-      'body': utf8.decode(bytes, allowMalformed: true),
-      'code': resp.statusCode,
-      'status': '\${resp.statusCode} \${resp.reasonPhrase}',
-      'url': uri.toString(),
-      'headers': outHeaders,
-    }));
-  } catch (e) {
-    stdout.write(jsonEncode({
-      'body': '',
-      'code': 0,
-      'status': e.toString(),
-      'url': cfg['url'],
-      'headers': <String, String>{},
-    }));
-  } finally {
-    client.close();
-  }
-}
-''');
-    final payload = jsonEncode({
-      'method': method,
-      'url': url,
-      'body': body,
-      'headers': headers,
-      'followRedirect': followRedirect,
-    });
-    final resolvedExe = Platform.resolvedExecutable;
-    final exeName = resolvedExe.split(Platform.pathSeparator).last;
-    final dartExe = (exeName == 'dart' || exeName == 'dart.exe')
-        ? resolvedExe
-        : 'dart';
-    final res = Process.runSync(
-      dartExe,
-      ['run', scriptFile.path],
-      environment: {'GOPRO_HTTP_REQ': payload},
-    );
-    if (res.exitCode == 0 && res.stdout.toString().trim().isNotEmpty) {
-      final decoded = jsonDecode(res.stdout.toString()) as Map<String, dynamic>;
-      final hdrs = <String, String>{};
-      final rawHdrs = decoded['headers'];
-      if (rawHdrs is Map) {
-        rawHdrs.forEach((k, v) => hdrs[k.toString()] = v.toString());
-      }
-      return JsHttpResponse(
-        body: (decoded['body'] ?? '').toString(),
-        code: (decoded['code'] as num?)?.toInt() ?? 0,
-        status: (decoded['status'] ?? '').toString(),
-        url: (decoded['url'] ?? url).toString(),
-        headers: hdrs,
-      );
-    }
-    return JsHttpResponse(url: url, status: res.stderr.toString());
-  } catch (e) {
-    return JsHttpResponse(url: url, status: e.toString());
-  } finally {
-    try {
-      tempDir.deleteSync(recursive: true);
-    } catch (_) {}
-  }
-}
-
 class _ParsedJSUrl {
   final String method;
   final String target;
   final String body;
   final Map<String, String> headers;
 
-  _ParsedJSUrl({
+  const _ParsedJSUrl({
     required this.method,
     required this.target,
     required this.body,
@@ -595,7 +365,7 @@ class _ParsedJSUrl {
 
 _ParsedJSUrl _parseJSURL(String urlStr) {
   final headers = <String, String>{};
-  var method = 'GET';
+  var method = '';
   var target = urlStr.trim();
   var body = '';
 
