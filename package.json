@@ -1,0 +1,13 @@
+{
+  "name": "gopro",
+  "version": "1.0.0",
+  "description": "Legado book source rule parser and CLI in Dart",
+  "private": true,
+  "scripts": {
+    "dev": "node -e \"require('http').createServer((_,res)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({name:'gopro',runtime:'dart-cli'}))}).listen(3000,'0.0.0.0')\"",
+    "build": "mkdir -p build && dart compile exe bin/gopro.dart -o build/gopro && dart compile exe bin/compare_cli.dart -o build/compare_cli",
+    "start": "dart run bin/gopro.dart",
+    "lint": "dart analyze",
+    "test": "dart test"
+  }
+}

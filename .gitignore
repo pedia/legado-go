@@ -1,7 +1,8 @@
-# Binary
-tou
+# Dart
+.dart_tool/
 build/
 .atomcode
+tou
 
 # Go
 *.exe
