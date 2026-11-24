@@ -165,6 +165,19 @@ void main() {
       expect(content, contains('斗之力，三段！'));
       expect(content, contains('望着测验魔石碑'));
       expect(content, isNot(contains('请记住本书首发域名')));
+
+      expect(mockSource.stats.successCount, 4);
+      expect(mockSource.stats.failedCount, 0);
+      expect(mockSource.stats.forStage(PipelineStage.search).successCount, 1);
+      expect(
+        mockSource.stats.forStage(PipelineStage.novelInfo).successCount,
+        1,
+      );
+      expect(
+        mockSource.stats.forStage(PipelineStage.chapterList).successCount,
+        1,
+      );
+      expect(mockSource.stats.forStage(PipelineStage.content).successCount, 1);
     },
   );
 }

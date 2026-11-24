@@ -8,6 +8,7 @@ export 'src/analyzer/sync_http_bridge.dart';
 export 'src/analyzer/xpath.dart';
 export 'src/analyzeurl/analyzeurl.dart';
 export 'src/compare/cli_compare.dart';
+export 'src/diagnostics/diagnostics.dart';
 export 'src/model/chapter.dart';
 export 'src/model/loader.dart';
 export 'src/model/novel.dart';

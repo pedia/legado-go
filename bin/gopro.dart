@@ -12,6 +12,24 @@ Future<void> main(List<String> arguments) async {
       defaultsTo: '1',
       help: 'Search result page number.',
     )
+    ..addOption(
+      'log-level',
+      abbr: 'l',
+      defaultsTo: 'warn',
+      allowed: ['debug', 'info', 'warn', 'error', 'off'],
+      help: 'Diagnostic log verbosity written to stderr.',
+    )
+    ..addFlag(
+      'verbose',
+      abbr: 'v',
+      negatable: false,
+      help: 'Shortcut for --log-level=debug.',
+    )
+    ..addFlag(
+      'summary',
+      defaultsTo: true,
+      help: 'Print end-of-run source health summary table to stderr.',
+    )
     ..addFlag(
       'help',
       abbr: 'h',
@@ -52,6 +70,11 @@ Future<void> main(List<String> arguments) async {
 
   final page = int.tryParse(parsed['page'] as String) ?? 1;
   final keyword = rest.sublist(2).join(' ');
+  final verbose = parsed['verbose'] as bool;
+  final showSummary = parsed['summary'] as bool;
+  final logLevel = verbose
+      ? LogLevel.debug
+      : LogLevel.parse(parsed['log-level'] as String);
 
   final List<NovelSource> sources;
   try {
@@ -60,14 +83,30 @@ Future<void> main(List<String> arguments) async {
     stderr.writeln('Failed to load sources: $e');
     exit(1);
   }
+
   stderr.writeln('Loaded ${sources.length} enabled sources');
   stderr.writeln('Searching for: $keyword');
 
-  final results = await searchBooks(sources, keyword, page);
-  stderr.writeln('Found ${results.length} results');
+  final logger = GoproLogger.stderr(minLevel: logLevel);
+  final sw = Stopwatch()..start();
+  final report = await searchBooksDetailed(sources, keyword, page, 10, logger);
+  sw.stop();
+
+  stderr.writeln(
+    'Found ${report.results.length} results '
+    '(${report.errors.length} failed sources, ${sw.elapsedMilliseconds}ms)',
+  );
+  if (showSummary) {
+    stderr.writeln(
+      SourceHealthSummaryFormatter.format(
+        sources,
+        totalElapsedMs: sw.elapsedMilliseconds,
+      ),
+    );
+  }
 
   const encoder = JsonEncoder.withIndent('  ');
-  print(encoder.convert([for (final r in results) r.toJson()]));
+  print(encoder.convert([for (final r in report.results) r.toJson()]));
 }
 
 void _printUsage(ArgParser parser) {
@@ -81,5 +120,5 @@ Options:
 ${parser.usage}
 
 Example:
-  dart run bin/gopro.dart doc/example.json search "斗破苍穹"''');
+  dart run bin/gopro.dart -l info doc/example.json search "斗破苍穹"''');
 }

@@ -1,3 +1,4 @@
+import '../diagnostics/diagnostics.dart';
 import 'json_helpers.dart';
 
 /// Defines rules for parsing search and explore/discover results.
@@ -200,7 +201,10 @@ class NovelSource {
   final ExploreRule ruleExplore;
   final Object? exploreUrl;
 
-  const NovelSource({
+  /// Runtime per-source success, failure, latency, and stage counters.
+  final SourceStats stats;
+
+  NovelSource({
     this.bookSourceName = '',
     this.bookSourceUrl = '',
     this.bookSourceGroup = '',
@@ -220,7 +224,8 @@ class NovelSource {
     this.ruleContent = const ContentRule(),
     this.ruleExplore = const SearchRule(),
     this.exploreUrl,
-  });
+    SourceStats? stats,
+  }) : stats = stats ?? SourceStats();
 
   factory NovelSource.fromJson(Map<String, dynamic> json) => NovelSource(
     bookSourceName: jsonAsString(json['bookSourceName']),
@@ -264,6 +269,12 @@ class NovelSource {
     'ruleContent': ruleContent.toJson(),
     'ruleExplore': ruleExplore.toJson(),
     'exploreUrl': exploreUrl,
+  };
+
+  /// Serializes the Legado source definition alongside runtime [stats].
+  Map<String, dynamic> toJsonWithStats() => {
+    ...toJson(),
+    'stats': stats.toJson(),
   };
 
   @override
