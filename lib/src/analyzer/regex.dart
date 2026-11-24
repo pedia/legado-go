@@ -35,7 +35,7 @@ List<String> applyAllInOne(String content, String rule) {
 /// Applies a `pattern##replacement` rule and returns the replaced result.
 String applyRegex(String rule, String content) {
   final parts = splitN(rule, '##', 3);
-  if (parts.length < 2) {
+  if (parts.length < 2 || parts[0].trim().isEmpty) {
     return content;
   }
   final pattern = parts[0];

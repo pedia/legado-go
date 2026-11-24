@@ -326,45 +326,19 @@ Future<void> _bridgeWorkerIsolate(SendPort readySend) async {
 }
 
 Future<Uint8List> _readAllFromAsyncSocket(Socket socket) async {
-  final completer = Completer<Uint8List>();
   final buffer = BytesBuilder(copy: false);
   var expectedLength = -1;
-
-  late final StreamSubscription<Uint8List> sub;
-  sub = socket.listen(
-    (chunk) {
-      buffer.add(chunk);
-      if (expectedLength < 0 && buffer.length >= 4) {
-        final current = buffer.toBytes();
-        expectedLength = ByteData.sublistView(
-          current,
-          0,
-          4,
-        ).getUint32(0, Endian.big);
-        buffer.clear();
-        buffer.add(current);
-      }
-      if (expectedLength >= 0 && buffer.length >= 4 + expectedLength) {
-        if (!completer.isCompleted) {
-          completer.complete(buffer.takeBytes());
-          sub.cancel();
-        }
-      }
-    },
-    onDone: () {
-      if (!completer.isCompleted) {
-        completer.complete(buffer.takeBytes());
-      }
-    },
-    onError: (Object err) {
-      if (!completer.isCompleted) {
-        completer.complete(buffer.takeBytes());
-      }
-    },
-    cancelOnError: true,
-  );
-
-  return completer.future;
+  await for (final chunk in socket) {
+    buffer.add(chunk);
+    if (expectedLength < 0 && buffer.length >= 4) {
+      final header = Uint8List.sublistView(buffer.toBytes(), 0, 4);
+      expectedLength = ByteData.sublistView(header).getUint32(0, Endian.big);
+    }
+    if (expectedLength >= 0 && buffer.length >= 4 + expectedLength) {
+      break;
+    }
+  }
+  return buffer.takeBytes();
 }
 
 /// Dispatches a synchronous HTTP(S) request without `curl`:
@@ -605,7 +579,7 @@ bool _isCompleteHttpResponse(Uint8List raw, {required String method}) {
 bool _hasCompleteChunkedBody(Uint8List data, int start) {
   var i = start;
   while (i < data.length) {
-    final lineEnd = _indexOfCrlf(data, i);
+    final lineEnd = _indexOfBytes(data, const [13, 10], i);
     if (lineEnd < 0) return false;
     final sizeLine = latin1
         .decode(Uint8List.sublistView(data, i, lineEnd))
@@ -616,13 +590,7 @@ bool _hasCompleteChunkedBody(Uint8List data, int start) {
     if (chunkSize == null) return false;
     if (chunkSize == 0) {
       // Final 0-size chunk ends with \r\n\r\n (or \r\n + trailers + \r\n\r\n).
-      return _indexOfBytes(Uint8List.sublistView(data, lineEnd), const [
-            13,
-            10,
-            13,
-            10,
-          ]) >=
-          0;
+      return _indexOfBytes(data, const [13, 10, 13, 10], lineEnd) >= 0;
     }
     final nextStart = lineEnd + 2 + chunkSize + 2;
     if (nextStart > data.length) return false;
@@ -706,9 +674,9 @@ JsHttpResponse _parseRawHttpResponse(
   );
 }
 
-int _indexOfBytes(Uint8List haystack, List<int> needle) {
+int _indexOfBytes(Uint8List haystack, List<int> needle, [int start = 0]) {
   outer:
-  for (var i = 0; i <= haystack.length - needle.length; i++) {
+  for (var i = start; i <= haystack.length - needle.length; i++) {
     for (var j = 0; j < needle.length; j++) {
       if (haystack[i + j] != needle[j]) continue outer;
     }
@@ -721,7 +689,7 @@ Uint8List _decodeChunkedBytes(Uint8List data) {
   final out = BytesBuilder(copy: false);
   var i = 0;
   while (i < data.length) {
-    final lineEnd = _indexOfCrlf(data, i);
+    final lineEnd = _indexOfBytes(data, const [13, 10], i);
     if (lineEnd < 0) break;
     final sizeLine = latin1
         .decode(Uint8List.sublistView(data, i, lineEnd))
@@ -740,13 +708,6 @@ Uint8List _decodeChunkedBytes(Uint8List data) {
     i = chunkEnd + 2;
   }
   return out.takeBytes();
-}
-
-int _indexOfCrlf(Uint8List data, int start) {
-  for (var i = start; i < data.length - 1; i++) {
-    if (data[i] == 13 && data[i + 1] == 10) return i;
-  }
-  return -1;
 }
 
 JsHttpResponse _syncHttpsSubprocess({

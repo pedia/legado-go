@@ -44,59 +44,58 @@ const String _testJSON =
 void main() {
   group('CSS / JSoup', () {
     test('extractHTML returns multiple items', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final items = ar.getElements('.book-like@a');
       expect(items.length, 2);
     });
 
     test('bare tag selector returns all <a> elements', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final items = ar.getElements('a');
       expect(items.length, greaterThanOrEqualTo(4));
     });
 
     test('multi-class selector', () {
-      final pool = JsPool(1);
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', pool);
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final items = ar.getElements(
         'class.mod block book-all-list@class.bd@tag.li@class.right',
       );
       expect(items.length, 2);
-      final ia = AnalyzeRule(items.first, 'https://test.com', pool);
+      final ia = AnalyzeRule(items.first, 'https://test.com');
       expect(ia.getString('class.name@text'), '苍穹');
     });
 
     test('exclude modifier li!0', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final items = ar.getElements('.txt-list@tag.ul@tag.li!0');
       expect(items.length, 2);
     });
 
     test('bare tag with index a.0@href', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       expect(ar.getString('a.0@href'), '/book/1');
     });
 
     test('|| cascade CSS', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       expect(ar.getString('h5@text||h4@text'), '斗破苍穹');
     });
 
     test('|| cascade elements', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final items = ar.getElements('.nonexistent||.grid-item');
       expect(items.length, 2);
     });
 
     test('## regex post-processing', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final res = ar.getString('class.info@ownText##作者：');
       expect(res, isNotEmpty);
       expect(res.startsWith('作者：'), isFalse);
     });
 
     test('|| cascade with ## post-processing', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final res = ar.getString('class.author@text||class.info@ownText##作者：');
       expect(res, isNotEmpty);
     });
@@ -104,14 +103,14 @@ void main() {
     test('percent interleave', () {
       const html =
           '<div><span class="a">A1</span><span class="a">A2</span><span class="b">B1</span><span class="b">B2</span></div>';
-      final ar = AnalyzeRule(html, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(html, 'https://test.com');
       expect(ar.getString('.a@text%%.b@text'), 'A1 B1 A2 B2');
     });
 
     test('ownText and bracket negative index', () {
       const html =
           '<div class="info">作者：<span>天蚕土豆</span> 玄幻</div><a href="/1">一</a><a href="/2">二</a>';
-      final ar = AnalyzeRule(html, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(html, 'https://test.com');
       expect(ar.getString('.info@ownText'), '作者： 玄幻');
       expect(ar.getString('a[-1]@href'), '/2');
     });
@@ -119,29 +118,29 @@ void main() {
 
   group('XPath', () {
     test('xpath text and attribute extraction', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       expect(ar.getString('//div[@class="book-like"]/a[1]/h4/text()'), '斗破苍穹');
       expect(ar.getString('//div[@class="book-like"]/a[2]/@href'), '/book/2');
     });
 
     test('xpath getElements preserves child structure', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final items = ar.getElements('//div[@class="book-like"]/a');
       expect(items.length, 2);
-      final itemAr = AnalyzeRule(items.first, 'https://test.com', JsPool(1));
+      final itemAr = AnalyzeRule(items.first, 'https://test.com');
       expect(itemAr.getString('//h4/text()'), '斗破苍穹');
     });
   });
 
   group('Inline Templates', () {
     test('CSS expression template', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final name = ar.getString(r'{{@h4@text||h3@text||""}}{{$.name||""}}');
       expect(name, '斗破苍穹');
     });
 
     test('|| cascade inside template', () {
-      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testHTMLFull, 'https://test.com');
       final name = ar.getString('{{@h3@text||h4@text||""}}');
       expect(name, '斗破苍穹');
     });
@@ -149,16 +148,15 @@ void main() {
 
   group('JSONPath', () {
     test('getElements on JSON array', () {
-      final ar = AnalyzeRule(_testJSON, 'https://test.com', JsPool(1));
+      final ar = AnalyzeRule(_testJSON, 'https://test.com');
       final items = ar.getElements(r'$[*]');
       expect(items.length, 2);
     });
 
     test('field extraction from JSON item', () {
-      final pool = JsPool(1);
-      final ar = AnalyzeRule(_testJSON, 'https://test.com', pool);
+      final ar = AnalyzeRule(_testJSON, 'https://test.com');
       final items = ar.getElements(r'$[*]');
-      final ia = AnalyzeRule(items.first, 'https://test.com', pool);
+      final ia = AnalyzeRule(items.first, 'https://test.com');
       expect(ia.getString(r'{{@h4@text||h3@text||""}}{{$.name||""}}'), '斗破苍穹');
       expect(ia.getString(r'{{@span@text||""}}{{$.author||""}}'), '天蚕土豆');
     });
@@ -167,7 +165,6 @@ void main() {
       final ar = AnalyzeRule(
         '{"tags":"玄幻","category":"小说","status":"完结","update":"2024-01-01"}',
         'https://test.com',
-        JsPool(1),
       );
       expect(
         ar.getString(r'$.tags&&$.category&&$.status&&$.update'),

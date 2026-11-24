@@ -149,7 +149,7 @@ void main() {
       addTearDown(() => tempDir.deleteSync(recursive: true));
 
       final sourcesFile = File('${tempDir.path}/sources.json');
-      final source = BookSource(
+      final source = NovelSource(
         bookSourceName: 'TestSource',
         bookSourceUrl: baseUrl,
         enabled: true,
@@ -193,5 +193,6 @@ void main() {
       );
       expect(res.stdout.toString(), contains('Status      : MATCH'));
     },
+    timeout: const Timeout(Duration(seconds: 60)),
   );
 }

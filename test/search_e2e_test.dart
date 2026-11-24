@@ -62,149 +62,101 @@ void main() {
   });
 
   test('SearchUrl POST with GBK charset', () {
-    final pool = JsPool(2);
     const searchUrl =
         '/s.php,{"method":"POST","body":"type=articlename&s={{key}}","charset":"gbk"}';
-    final a = AnalyzeUrl(searchUrl, '斗破', 1, 'http://i.12bz.net', '', pool);
+    final a = AnalyzeUrl(searchUrl, '斗破', 1, 'http://i.12bz.net', '');
     expect(a.method, 'POST');
     expect(a.charset, 'gbk');
     expect(a.body, contains('斗破'));
   });
 
   test('SearchUrl angle bracket page', () {
-    final pool = JsPool(2);
     const searchUrl = '/book/search/{{key}}<,/{{page}}>';
-    final a = AnalyzeUrl(searchUrl, '斗破', 1, 'https://sesebooks.com', '', pool);
+    final a = AnalyzeUrl(searchUrl, '斗破', 1, 'https://sesebooks.com', '');
     expect(a.finalUrl.contains('<') || a.finalUrl.contains('>'), isFalse);
     expect(a.finalUrl.contains('page'), isFalse);
 
-    final a2 = AnalyzeUrl(
-      searchUrl,
-      '斗破',
-      2,
-      'https://sesebooks.com',
-      '',
-      pool,
-    );
+    final a2 = AnalyzeUrl(searchUrl, '斗破', 2, 'https://sesebooks.com', '');
     expect(a2.finalUrl, contains('/2'));
   });
 
   test('SearchUrl source comment eval', () {
-    final pool = JsPool(2);
     const searchUrl =
         '{{cookie.removeCookie(source.getKey());eval(String(source.bookSourceComment))}}';
     const comment =
         "result = 'https://www.aakkrr.com/book/' + encodeURIComponent(key) + '<,/1>'";
-    final a = AnalyzeUrl(
-      searchUrl,
-      '斗破',
-      1,
-      'https://www.aahhss.com',
-      '',
-      pool,
-    );
+    final a = AnalyzeUrl(searchUrl, '斗破', 1, 'https://www.aahhss.com', '');
     a.setComment(comment);
     expect(a.finalUrl.contains('{{'), isFalse);
     expect(a.finalUrl, contains('aakkrr.com'));
   });
 
   test('SearchUrl query param key and page', () {
-    final pool = JsPool(2);
     const searchUrl =
         'https://www.alicesw.com/search.html?q={{key}}&p={{page}}';
-    final a = AnalyzeUrl(
-      searchUrl,
-      '斗破',
-      2,
-      'https://www.alicesw.com',
-      '',
-      pool,
-    );
+    final a = AnalyzeUrl(searchUrl, '斗破', 2, 'https://www.alicesw.com', '');
     expect(a.finalUrl, contains('q='));
     expect(a.finalUrl, contains('p=2'));
   });
 
   test('SearchUrl relative path', () {
-    final pool = JsPool(2);
     const searchUrl = '/e/search/,{"body":"keyboard={{key}}","method":"POST"}';
-    final a = AnalyzeUrl(
-      searchUrl,
-      '斗破',
-      1,
-      'https://www.aahhss.com/',
-      '',
-      pool,
-    );
+    final a = AnalyzeUrl(searchUrl, '斗破', 1, 'https://www.aahhss.com/', '');
     expect(a.finalUrl, startsWith('https://www.aahhss.com'));
     expect(a.method, 'POST');
   });
 
   test('CSS alicesw bookList', () {
-    final pool = JsPool(2);
     final ar = AnalyzeRule(
       _aliceSearchHTML,
       'https://www.alicesw.com/search.html',
-      pool,
     );
     final items = ar.getElements('class.list-group-item');
     expect(items.length, 2);
-    final item = AnalyzeRule(items.first, 'https://www.alicesw.com', pool);
+    final item = AnalyzeRule(items.first, 'https://www.alicesw.com');
     final name = item.getString(r'h5@text##\d+\.|\[已完结\]|\[连载中\]');
     expect(name, contains('斗破苍穹'));
     expect(item.getString('class.mb-1@a@text'), '天蚕土豆');
   });
 
   test('CSS diyibanzhu bookList', () {
-    final pool = JsPool(2);
-    final ar = AnalyzeRule(
-      _diyibanzhuHTML,
-      'https://m.diyibanzhu2.online/',
-      pool,
-    );
+    final ar = AnalyzeRule(_diyibanzhuHTML, 'https://m.diyibanzhu2.online/');
     final items = ar.getElements(
       'class.mod block book-all-list@class.bd@class.right',
     );
     expect(items.length, 2);
-    final item = AnalyzeRule(
-      items.first,
-      'https://m.diyibanzhu2.online/',
-      pool,
-    );
+    final item = AnalyzeRule(items.first, 'https://m.diyibanzhu2.online/');
     expect(item.getString('class.name@text'), '斗破苍穹');
     expect(item.getString('class.author@text'), '天蚕土豆');
   });
 
   test('CSS cover p and tag.a.1', () {
-    final pool = JsPool(2);
-    final ar = AnalyzeRule(_coverHTML, 'http://i.12bz.net', pool);
+    final ar = AnalyzeRule(_coverHTML, 'http://i.12bz.net');
     final items = ar.getElements('.cover@p');
     expect(items.length, 2);
-    final item = AnalyzeRule(items.first, 'http://i.12bz.net', pool);
+    final item = AnalyzeRule(items.first, 'http://i.12bz.net');
     expect(item.getString('tag.a.1@text'), '斗破苍穹');
   });
 
   test('CSS line items', () {
-    final pool = JsPool(2);
-    final ar = AnalyzeRule(_lineHTML, 'http://i.12bz.net', pool);
+    final ar = AnalyzeRule(_lineHTML, 'http://i.12bz.net');
     final items = ar.getElements('class.line');
     expect(items.length, 2);
-    final item = AnalyzeRule(items.first, 'http://i.12bz.net', pool);
+    final item = AnalyzeRule(items.first, 'http://i.12bz.net');
     expect(item.getString('class.line@tag.a.1@text'), '斗破苍穹');
   });
 
   test('JSON search bookList', () {
-    final pool = JsPool(2);
-    final ar = AnalyzeRule(_searchJSON, 'https://api.example.com/search', pool);
+    final ar = AnalyzeRule(_searchJSON, 'https://api.example.com/search');
     final items = ar.getElements(r'$[*]');
     expect(items.length, 2);
-    final item = AnalyzeRule(items.first, 'https://api.example.com', pool);
+    final item = AnalyzeRule(items.first, 'https://api.example.com');
     expect(item.getString(r'$.name'), '斗破苍穹');
     expect(item.getString(r'$.author'), '天蚕土豆');
     expect(item.getString(r'$.kind'), '玄幻');
   });
 
   test('SearchUrl double page pattern', () {
-    final pool = JsPool(2);
     const searchUrl = 'search_top_{{key}}_691_{{page}}.html';
     final a = AnalyzeUrl(
       searchUrl,
@@ -212,7 +164,6 @@ void main() {
       3,
       'https://m.diyibanzhu2.online/',
       '',
-      pool,
     );
     expect(a.finalUrl, contains('3.html'));
     expect(a.finalUrl, contains('691'));

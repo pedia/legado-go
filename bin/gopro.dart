@@ -53,7 +53,7 @@ Future<void> main(List<String> arguments) async {
   final page = int.tryParse(parsed['page'] as String) ?? 1;
   final keyword = rest.sublist(2).join(' ');
 
-  final List<BookSource> sources;
+  final List<NovelSource> sources;
   try {
     sources = await loadSources(jsonFile);
   } catch (e) {

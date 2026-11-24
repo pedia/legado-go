@@ -1,16 +1,12 @@
 import '../analyzer/analyzer.dart';
 import '../analyzer/sync_http_bridge.dart';
 import '../analyzeurl/analyzeurl.dart';
-import '../model/booksource.dart';
 import '../model/novel.dart';
+import '../model/novel_source.dart';
 import 'url_utils.dart';
 
 /// Fetches metadata for a novel from its detail page.
-Future<Novel?> getBookInfo(
-  BookSource source,
-  String bookUrl, [
-  JsPool? jsPool,
-]) {
+Future<Novel?> getNovelInfo(NovelSource source, String bookUrl) {
   return withSyncHttpBridge(() async {
     final aurl = AnalyzeUrl(
       bookUrl,
@@ -18,16 +14,13 @@ Future<Novel?> getBookInfo(
       0,
       source.bookSourceUrl,
       source.header,
-      jsPool,
     );
 
-    final body = await aurl.getStrResponse(jsPool);
-    if (body.isEmpty) {
-      return null;
-    }
+    final body = await aurl.getStrResponse();
+    if (body.isEmpty) return null;
 
-    final ar = AnalyzeRule(body, aurl.finalUrl, jsPool);
-    final infoRule = source.ruleBookInfo;
+    final ar = AnalyzeRule(body, aurl.finalUrl);
+    final infoRule = source.ruleNovelInfo;
 
     if (infoRule.init.isNotEmpty) {
       final initResult = ar.getElement(infoRule.init);
@@ -43,17 +36,12 @@ Future<Novel?> getBookInfo(
         ? ar.getString(infoRule.tocUrl)
         : '';
 
-    final coverUrl = rawCoverUrl.isNotEmpty
-        ? resolveWebUrl(aurl.finalUrl, rawCoverUrl)
-        : '';
-    final tocUrl = rawTocUrl.isNotEmpty
-        ? resolveWebUrl(aurl.finalUrl, rawTocUrl)
-        : aurl.finalUrl;
-
     return Novel(
       name: infoRule.name.isNotEmpty ? ar.getString(infoRule.name) : '',
       author: infoRule.author.isNotEmpty ? ar.getString(infoRule.author) : '',
-      coverUrl: coverUrl,
+      coverUrl: rawCoverUrl.isNotEmpty
+          ? resolveWebUrl(aurl.finalUrl, rawCoverUrl)
+          : '',
       intro: infoRule.intro.isNotEmpty ? ar.getString(infoRule.intro) : '',
       kind: infoRule.kind.isNotEmpty ? ar.getString(infoRule.kind) : '',
       lastChapter: infoRule.lastChapter.isNotEmpty
@@ -62,7 +50,9 @@ Future<Novel?> getBookInfo(
       wordCount: infoRule.wordCount.isNotEmpty
           ? ar.getString(infoRule.wordCount)
           : '',
-      tocUrl: tocUrl,
+      tocUrl: rawTocUrl.isNotEmpty
+          ? resolveWebUrl(aurl.finalUrl, rawTocUrl)
+          : aurl.finalUrl,
       bookUrl: bookUrl,
       origin: source.bookSourceUrl,
       originName: source.bookSourceName,

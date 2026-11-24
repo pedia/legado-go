@@ -53,10 +53,9 @@ void main() {
   });
 
   test('inline expr cookie.removeCookie', () {
-    final pool = JsPool(2);
     const searchUrl =
         '{{cookie.removeCookie("https://example.com")}}\nhttps://example.com/search/,{"body":"s={{key}}","method":"POST"}';
-    final a = AnalyzeUrl(searchUrl, 'test', 1, 'https://example.com', '', pool);
+    final a = AnalyzeUrl(searchUrl, 'test', 1, 'https://example.com', '');
     a.setComment('');
     expect(a.finalUrl.contains('cookie'), isFalse);
     expect(a.method, 'POST');
@@ -64,11 +63,10 @@ void main() {
   });
 
   test('inline expr source.bookSourceComment eval', () {
-    final pool = JsPool(2);
     const searchUrl =
         '{{cookie.removeCookie(source.getKey());eval(String(source.bookSourceComment))}}';
     const comment = "result = 'https://example.com/search/'";
-    final a = AnalyzeUrl(searchUrl, 'test', 1, 'https://example.com', '', pool);
+    final a = AnalyzeUrl(searchUrl, 'test', 1, 'https://example.com', '');
     a.setComment(comment);
     expect(a.finalUrl, 'https://example.com/search/');
   });
@@ -105,27 +103,23 @@ void main() {
   });
 
   test('inline expr page arithmetic', () {
-    final pool = JsPool(1);
     final a = AnalyzeUrl(
       '/booklist/{{page-1}}.html',
       'test',
       3,
       'https://example.com',
       '',
-      pool,
     );
     expect(a.finalUrl, 'https://example.com/booklist/2.html');
   });
 
   test('parseUrlOption extended fields and option JS', () {
-    final pool = JsPool(1);
     final a = AnalyzeUrl(
       '/file,{"type":"bin","retry":"2","webView":"true","webJs":"return document.body.innerText","serverID":"7","webViewDelayTime":"300","proxy":"http://127.0.0.1:8888","js":"url=url+\'?x=1\';java.headerMap.put(\'X-Test\',\'ok\')"}',
       'test',
       1,
       'https://example.com',
       '',
-      pool,
     );
     expect(a.type, 'bin');
     expect(a.retry, 2);

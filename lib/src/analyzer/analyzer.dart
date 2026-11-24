@@ -12,25 +12,13 @@ import 'xpath.dart';
 /// Matches `{{expression}}` inline templates (non-greedy).
 final RegExp templateExprPattern = RegExp(r'\{\{[\s\S]*?\}\}');
 
-/// Lightweight JS pool abstraction matching Go's `qjs.Pool` role.
-class JsPool {
-  final int size;
-
-  JsPool([this.size = 5]);
-
-  JSInterpreter acquire() => JSInterpreter();
-
-  void release(JSInterpreter interpreter) {}
-}
-
 /// Main Legado rule dispatcher.
 class AnalyzeRule {
   String _content;
   String _baseUrl;
   bool _isJson;
-  final JsPool? _jsPool;
 
-  AnalyzeRule(this._content, this._baseUrl, [this._jsPool])
+  AnalyzeRule(this._content, [this._baseUrl = ''])
     : _isJson = isJsonContent(_content);
 
   String get content => _content;
@@ -317,28 +305,15 @@ class AnalyzeRule {
     }
 
     final resolved = result.toString();
-    final idx = resolved.indexOf('##');
-    if (idx != -1) {
-      final mainRule = resolved.substring(0, idx).trim();
-      var regexPart = resolved.substring(idx + 2);
-      var replacement = '';
-      final idx2 = regexPart.indexOf('##');
-      if (idx2 != -1) {
-        replacement = regexPart.substring(idx2 + 2);
-        regexPart = regexPart.substring(0, idx2);
-      }
-      if (regexPart.isNotEmpty) {
-        try {
-          final re = RegExp(regexPart);
-          return regexReplaceAll(re, mainRule, replacement).trim();
-        } on FormatException {
-          return mainRule;
-        }
-      }
-      return mainRule;
+    if (!resolved.contains('##')) {
+      return resolved.trim();
     }
-
-    return resolved.trim();
+    final (:mainRule, :replaceRegex, :replacement) = _splitHashReplacement(
+      resolved,
+    );
+    return replaceRegex.isNotEmpty
+        ? _applyRegexPost(mainRule, replaceRegex, replacement)
+        : mainRule;
   }
 
   String _resolveTemplateExpr(String expr, String content) {
@@ -402,8 +377,7 @@ class AnalyzeRule {
   }
 
   String _evalJS(String jsCode, String result) {
-    final pool = _jsPool ?? JsPool(1);
-    final js = pool.acquire();
+    final js = JSInterpreter();
     try {
       injectLegadoStubs(js);
       js.setGlobal('result', result);
@@ -427,8 +401,6 @@ class AnalyzeRule {
       return res.toString();
     } catch (_) {
       return result;
-    } finally {
-      pool.release(js);
     }
   }
 }

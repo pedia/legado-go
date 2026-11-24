@@ -1,17 +1,13 @@
 import '../analyzer/analyzer.dart';
 import '../analyzer/sync_http_bridge.dart';
 import '../analyzeurl/analyzeurl.dart';
-import '../model/booksource.dart';
 import '../model/chapter.dart';
 import '../model/novel.dart';
+import '../model/novel_source.dart';
 import 'url_utils.dart';
 
 /// Fetches the table of contents for a [novel], handling `nextTocUrl` pagination.
-Future<List<BookChapter>> getChapterList(
-  BookSource source,
-  Novel novel, [
-  JsPool? jsPool,
-]) {
+Future<List<BookChapter>> getChapterList(NovelSource source, Novel novel) {
   return withSyncHttpBridge(() async {
     var tocUrl = novel.tocUrl.isNotEmpty ? novel.tocUrl : novel.bookUrl;
 
@@ -25,11 +21,7 @@ Future<List<BookChapter>> getChapterList(
       }
 
       try {
-        final (:chapters, :nextUrl) = await _parseChapterPage(
-          source,
-          tocUrl,
-          jsPool,
-        );
+        final (:chapters, :nextUrl) = await _parseChapterPage(source, tocUrl);
         allChapters.addAll(chapters);
         tocUrl = nextUrl;
       } catch (_) {
@@ -46,25 +38,17 @@ Future<List<BookChapter>> getChapterList(
 }
 
 Future<({List<BookChapter> chapters, String nextUrl})> _parseChapterPage(
-  BookSource source,
+  NovelSource source,
   String pageUrl,
-  JsPool? jsPool,
 ) async {
-  final aurl = AnalyzeUrl(
-    pageUrl,
-    '',
-    0,
-    source.bookSourceUrl,
-    source.header,
-    jsPool,
-  );
+  final aurl = AnalyzeUrl(pageUrl, '', 0, source.bookSourceUrl, source.header);
 
-  final body = await aurl.getStrResponse(jsPool);
+  final body = await aurl.getStrResponse();
   if (body.isEmpty) {
     return (chapters: const <BookChapter>[], nextUrl: '');
   }
 
-  final ar = AnalyzeRule(body, aurl.finalUrl, jsPool);
+  final ar = AnalyzeRule(body, aurl.finalUrl);
   final tocRule = source.ruleToc;
 
   var listRule = tocRule.chapterList;
@@ -85,7 +69,7 @@ Future<({List<BookChapter> chapters, String nextUrl})> _parseChapterPage(
 
   var chapters = <BookChapter>[];
   for (final elem in chapterElements) {
-    final elemAr = AnalyzeRule(elem, aurl.finalUrl, jsPool);
+    final elemAr = AnalyzeRule(elem, aurl.finalUrl);
     final chapterName = tocRule.chapterName.isNotEmpty
         ? elemAr.getString(tocRule.chapterName)
         : '';

@@ -2,22 +2,19 @@ import '../analyzer/analyzer.dart';
 import '../analyzer/regex.dart';
 import '../analyzer/sync_http_bridge.dart';
 import '../analyzeurl/analyzeurl.dart';
-import '../model/booksource.dart';
 import '../model/chapter.dart';
 import '../model/novel.dart';
+import '../model/novel_source.dart';
 import 'url_utils.dart';
 
 /// Fetches the content of a [chapter], handling `nextContentUrl` pagination.
 Future<String> getContent(
-  BookSource source,
+  NovelSource source,
   Novel novel,
-  BookChapter chapter, [
-  JsPool? jsPool,
-]) {
+  BookChapter chapter,
+) {
   return withSyncHttpBridge(() async {
-    if (chapter.url.isEmpty) {
-      return '';
-    }
+    if (chapter.url.isEmpty) return '';
 
     final contentParts = <String>[];
     final visited = <String>{};
@@ -33,7 +30,6 @@ Future<String> getContent(
         final (:content, :nextUrl) = await _parseContentPage(
           source,
           currentUrl,
-          jsPool,
         );
         if (content.isNotEmpty) {
           contentParts.add(content);
@@ -50,25 +46,17 @@ Future<String> getContent(
 }
 
 Future<({String content, String nextUrl})> _parseContentPage(
-  BookSource source,
+  NovelSource source,
   String pageUrl,
-  JsPool? jsPool,
 ) async {
-  final aurl = AnalyzeUrl(
-    pageUrl,
-    '',
-    0,
-    source.bookSourceUrl,
-    source.header,
-    jsPool,
-  );
+  final aurl = AnalyzeUrl(pageUrl, '', 0, source.bookSourceUrl, source.header);
 
-  final body = await aurl.getStrResponse(jsPool);
+  final body = await aurl.getStrResponse();
   if (body.isEmpty) {
     return (content: '', nextUrl: '');
   }
 
-  final ar = AnalyzeRule(body, aurl.finalUrl, jsPool);
+  final ar = AnalyzeRule(body, aurl.finalUrl);
   final contentRule = source.ruleContent;
 
   var content = contentRule.content.isNotEmpty
@@ -78,7 +66,7 @@ Future<({String content, String nextUrl})> _parseContentPage(
   if (content.isNotEmpty) {
     content = content.trim();
     if (contentRule.replaceRegex.isNotEmpty) {
-      content = _applyReplaceRegex(content, contentRule.replaceRegex);
+      content = applyRegex(contentRule.replaceRegex, content);
     }
     content = cleanContent(content);
   }
@@ -92,28 +80,6 @@ Future<({String content, String nextUrl})> _parseContentPage(
   }
 
   return (content: content, nextUrl: nextUrl);
-}
-
-String _applyReplaceRegex(String content, String rule) {
-  final parts = splitN(rule, '##', 3);
-  var pattern = rule;
-  var replacement = '';
-  if (parts.length >= 2) {
-    pattern = parts[0];
-    replacement = parts[1];
-  }
-  if (parts.length == 3) {
-    replacement = parts[2];
-  }
-  if (pattern.trim().isEmpty) {
-    return content;
-  }
-  try {
-    final re = RegExp(pattern);
-    return regexReplaceAll(re, content, replacement);
-  } on FormatException {
-    return content;
-  }
 }
 
 /// Removes common ad patterns and normalizes whitespace lines.

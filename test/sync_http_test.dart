@@ -196,14 +196,12 @@ void main() {
     test(
       'executes @js URL using SyncHttpBridge, retries 5xx, and decodes GBK',
       () async {
-        final pool = JsPool(2);
         final a1 = AnalyzeUrl(
           '@js:var u=java.connect("$baseUrl/redirect").url(); result=u;',
           'test',
           1,
           baseUrl,
           '',
-          pool,
         );
         final res1 = await a1.getStrResponse();
         expect(res1, 'arrived-at-final');
@@ -214,7 +212,6 @@ void main() {
           1,
           baseUrl,
           '',
-          pool,
         );
         final resRetry = await aRetry.getStrResponse();
         expect(resRetry, 'recovered');
@@ -225,7 +222,6 @@ void main() {
           1,
           baseUrl,
           '',
-          pool,
         );
         final resGbk = await aGbk.getStrResponse();
         expect(resGbk, '斗破苍穹');

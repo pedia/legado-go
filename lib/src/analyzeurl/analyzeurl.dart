@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:js_interpreter/js_interpreter.dart';
 
-import '../analyzer/analyzer.dart';
 import '../analyzer/legado_stub.dart';
 import '../analyzer/sync_http_bridge.dart';
 
@@ -84,7 +83,6 @@ class AnalyzeUrl {
   String sourceUrl;
   String sourceHeader;
   String jsCode = '';
-  final JsPool? _jsPool;
   String _encodedKey = '';
   String _rawKey = '';
   int page = 0;
@@ -102,9 +100,8 @@ class AnalyzeUrl {
     String key,
     int page,
     this.sourceUrl,
-    this.sourceHeader, [
-    this._jsPool,
-  ]) {
+    this.sourceHeader,
+  ) {
     _initUrl(key, page);
   }
 
@@ -114,8 +111,7 @@ class AnalyzeUrl {
     this.sourceUrl = '',
     this.sourceHeader = '',
     this.page = 0,
-    JsPool? jsPool,
-  }) : _jsPool = jsPool;
+  });
 
   /// Stores [comment] (`bookSourceComment`) for `eval()` in inline expressions
   /// and re-derives the URL from the original template.
@@ -131,9 +127,7 @@ class AnalyzeUrl {
 
     if (url.contains('{{')) {
       finalUrl = url;
-      if (_jsPool != null) {
-        resolveInlineExpressions();
-      }
+      resolveInlineExpressions();
     } else {
       url = resolveAngleBracketPages(url);
       finalUrl = processUrl(url);
@@ -164,9 +158,7 @@ class AnalyzeUrl {
 
     if (url.contains('{{')) {
       finalUrl = url;
-      if (_jsPool != null) {
-        resolveInlineExpressions();
-      }
+      resolveInlineExpressions();
     } else {
       url = resolveAngleBracketPages(url);
       finalUrl = processUrl(url);
@@ -306,36 +298,31 @@ class AnalyzeUrl {
 
   /// Evaluates `{{expression}}` JS templates in [finalUrl].
   void resolveInlineExpressions() {
-    final pool = _jsPool;
-    if (pool == null || !finalUrl.contains('{{')) return;
+    if (!finalUrl.contains('{{')) return;
 
     for (var i = 0; i < 5; i++) {
       final (:start, :end, :expr) = findTemplateExpr(finalUrl);
       if (expr.isEmpty || !_looksLikeJSExpression(expr)) break;
 
-      final js = pool.acquire();
+      final js = JSInterpreter();
       var resultStr = '';
+      _injectJSContext(js, '');
       try {
-        _injectJSContext(js, '');
+        final res = js.eval(expr);
+        if (!res.isUndefined && !res.isNull) {
+          resultStr = res.toString();
+        }
+      } catch (_) {}
+
+      if (resultStr.isEmpty) {
         try {
-          final res = js.eval(expr);
-          if (!res.isUndefined && !res.isNull) {
-            resultStr = res.toString();
+          final gv = js.eval(
+            'typeof result !== "undefined" && result !== null ? String(result) : ""',
+          );
+          if (!gv.isUndefined && !gv.isNull && gv.toString().isNotEmpty) {
+            resultStr = gv.toString();
           }
         } catch (_) {}
-
-        if (resultStr.isEmpty) {
-          try {
-            final gv = js.eval(
-              'typeof result !== "undefined" && result !== null ? String(result) : ""',
-            );
-            if (!gv.isUndefined && !gv.isNull && gv.toString().isNotEmpty) {
-              resultStr = gv.toString();
-            }
-          } catch (_) {}
-        }
-      } finally {
-        pool.release(js);
       }
 
       finalUrl =
@@ -353,44 +340,38 @@ class AnalyzeUrl {
     finalUrl = processUrl(finalUrl);
   }
 
-  void _resolveJS([JsPool? customPool]) {
-    final pool = customPool ?? _jsPool;
-    if (pool == null) return;
-    final js = pool.acquire();
+  void _resolveJS() {
+    final js = JSInterpreter();
+    _injectJSContext(js, '');
+    var resultStr = '';
     try {
-      _injectJSContext(js, '');
-      var resultStr = '';
+      final res = js.eval(jsCode);
+      if (!res.isUndefined && !res.isNull) {
+        resultStr = res.toString();
+      }
+    } catch (_) {
+      return;
+    }
+    if (resultStr.isEmpty) {
       try {
-        final res = js.eval(jsCode);
-        if (!res.isUndefined && !res.isNull) {
-          resultStr = res.toString();
+        final rv = js.eval(
+          'typeof result !== "undefined" && result !== null ? String(result) : ""',
+        );
+        if (!rv.isUndefined && !rv.isNull) {
+          resultStr = rv.toString();
         }
-      } catch (_) {
-        return;
-      }
-      if (resultStr.isEmpty) {
-        try {
-          final rv = js.eval(
-            'typeof result !== "undefined" && result !== null ? String(result) : ""',
-          );
-          if (!rv.isUndefined && !rv.isNull) {
-            resultStr = rv.toString();
-          }
-        } catch (_) {}
-      }
-      if (resultStr.isEmpty) return;
+      } catch (_) {}
+    }
+    if (resultStr.isEmpty) return;
 
-      final commaIdx = findOptionSeparator(resultStr);
-      if (commaIdx != -1) {
-        final optStr = resultStr.substring(commaIdx + 1);
-        resultStr = resultStr.substring(0, commaIdx);
-        parseUrlOption(optStr);
-      }
-      if (resultStr.isNotEmpty) {
-        finalUrl = resolveURL(sourceUrl, resultStr);
-      }
-    } finally {
-      pool.release(js);
+    final commaIdx = findOptionSeparator(resultStr);
+    if (commaIdx != -1) {
+      final optStr = resultStr.substring(commaIdx + 1);
+      resultStr = resultStr.substring(0, commaIdx);
+      parseUrlOption(optStr);
+    }
+    if (resultStr.isNotEmpty) {
+      finalUrl = resolveURL(sourceUrl, resultStr);
     }
   }
 
@@ -416,57 +397,50 @@ class AnalyzeUrl {
   }
 
   void _evalOptionJS(String code) {
-    final pool = _jsPool;
-    if (pool == null || code.trim().isEmpty) return;
-    final js = pool.acquire();
+    if (code.trim().isEmpty) return;
+    final js = JSInterpreter();
+    _injectJSContext(js, finalUrl);
+    final qFinal = quoteJS(finalUrl);
+    js.eval(
+      'var url = $qFinal;'
+      'java.url = url;'
+      'java._headers = {};'
+      'java.headerMap = {put:function(k,v){java._headers[String(k)] = String(v);}};',
+    );
     try {
-      _injectJSContext(js, finalUrl);
-      final qFinal = quoteJS(finalUrl);
-      js.eval(
-        'var url = $qFinal;'
-        'java.url = url;'
-        'java._headers = {};'
-        'java.headerMap = {put:function(k,v){java._headers[String(k)] = String(v);}};',
+      final res = js.eval(code);
+      if (!res.isUndefined && !res.isNull && res.toString().isNotEmpty) {
+        finalUrl = resolveURL(sourceUrl, res.toString());
+      }
+    } catch (_) {}
+
+    try {
+      final v = js.eval(
+        'typeof url !== "undefined" && url !== null ? String(url) : ""',
       );
-      try {
-        final res = js.eval(code);
-        if (!res.isUndefined && !res.isNull && res.toString().isNotEmpty) {
-          finalUrl = resolveURL(sourceUrl, res.toString());
-        }
-      } catch (_) {}
+      if (!v.isUndefined && !v.isNull && v.toString().isNotEmpty) {
+        finalUrl = resolveURL(sourceUrl, v.toString());
+      }
+    } catch (_) {}
 
-      try {
-        final v = js.eval(
-          'typeof url !== "undefined" && url !== null ? String(url) : ""',
-        );
-        if (!v.isUndefined && !v.isNull && v.toString().isNotEmpty) {
-          finalUrl = resolveURL(sourceUrl, v.toString());
+    try {
+      final hJson = js.eval('JSON.stringify(java._headers || {})');
+      if (!hJson.isUndefined && !hJson.isNull) {
+        final decoded = jsonDecode(hJson.toString());
+        if (decoded is Map) {
+          decoded.forEach((k, v) {
+            headerMap[k.toString()] = v.toString();
+          });
         }
-      } catch (_) {}
-
-      try {
-        final hJson = js.eval('JSON.stringify(java._headers || {})');
-        if (!hJson.isUndefined && !hJson.isNull) {
-          final decoded = jsonDecode(hJson.toString());
-          if (decoded is Map) {
-            decoded.forEach((k, v) {
-              headerMap[k.toString()] = v.toString();
-            });
-          }
-        }
-      } catch (_) {}
-    } finally {
-      pool.release(js);
-    }
+      }
+    } catch (_) {}
   }
 
   /// Sends the HTTP request using `package:http` (`IOClient`) and returns
   /// the response body decoded according to [charset] (or hex when [type] is set).
-  Future<String> getStrResponse([JsPool? customPool]) async {
+  Future<String> getStrResponse() async {
     if (jsCode.isNotEmpty) {
-      await withSyncHttpBridge(() async {
-        _resolveJS(customPool);
-      });
+      await withSyncHttpBridge(() async => _resolveJS());
     }
     if (finalUrl.trim().isEmpty) {
       throw StateError('empty final url after analyzing rule "$ruleUrl"');
@@ -600,10 +574,8 @@ class AnalyzeUrl {
   }
 
   /// Executes JavaScript on [responseBody] and returns the result.
-  String executeJS(String code, String responseBody, [JsPool? customPool]) {
-    final pool = customPool ?? _jsPool;
-    if (pool == null) return responseBody;
-    final js = pool.acquire();
+  String executeJS(String code, String responseBody) {
+    final js = JSInterpreter();
     try {
       js.setGlobal('result', responseBody);
       js.setGlobal('baseUrl', finalUrl);
@@ -613,8 +585,6 @@ class AnalyzeUrl {
       return res.toString();
     } catch (_) {
       return responseBody;
-    } finally {
-      pool.release(js);
     }
   }
 }
@@ -793,14 +763,16 @@ String _encodeWholeBody(String body, String charset) {
 }
 
 String _encodeFormBody(String body, String charset) {
-  return [
-    for (final part in body.split('&'))
-      if (part.indexOf('=') case final eq when eq == -1)
-        _encodeFormComponent(part, charset)
-      else
-        '${_encodeFormComponent(part.substring(0, part.indexOf('=')), charset)}='
-            '${_encodeFormComponent(part.substring(part.indexOf('=') + 1), charset)}',
-  ].join('&');
+  return body
+      .split('&')
+      .map((part) {
+        final eq = part.indexOf('=');
+        return eq == -1
+            ? _encodeFormComponent(part, charset)
+            : '${_encodeFormComponent(part.substring(0, eq), charset)}='
+                  '${_encodeFormComponent(part.substring(eq + 1), charset)}';
+      })
+      .join('&');
 }
 
 String _encodeFormComponent(String s, String charset) {

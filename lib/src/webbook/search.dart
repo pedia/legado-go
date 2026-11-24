@@ -3,8 +3,8 @@ import 'dart:async';
 import '../analyzer/analyzer.dart';
 import '../analyzer/sync_http_bridge.dart';
 import '../analyzeurl/analyzeurl.dart';
-import '../model/booksource.dart';
 import '../model/novel.dart';
+import '../model/novel_source.dart';
 import 'url_utils.dart';
 
 class SourceError {
@@ -42,29 +42,21 @@ class SearchReport {
 
 /// Searches novels across multiple sources concurrently.
 Future<List<SearchBook>> searchBooks(
-  List<BookSource> sources,
+  List<NovelSource> sources,
   String key,
   int page, [
   int maxConcurrency = 10,
-  JsPool? jsPool,
 ]) async {
-  final report = await searchBooksDetailed(
-    sources,
-    key,
-    page,
-    maxConcurrency,
-    jsPool,
-  );
+  final report = await searchBooksDetailed(sources, key, page, maxConcurrency);
   return report.results;
 }
 
 /// Like [searchBooks] but preserves per-source diagnostics.
 Future<SearchReport> searchBooksDetailed(
-  List<BookSource> sources,
+  List<NovelSource> sources,
   String key,
   int page, [
   int maxConcurrency = 10,
-  JsPool? jsPool,
 ]) {
   return withSyncHttpBridge(() async {
     final concurrency = maxConcurrency <= 0 ? 10 : maxConcurrency;
@@ -81,8 +73,7 @@ Future<SearchReport> searchBooksDetailed(
       while (nextIndex < activeSources.length) {
         final src = activeSources[nextIndex++];
         try {
-          final found = await searchFromSource(src, key, page, jsPool);
-          results.addAll(found);
+          results.addAll(await searchFromSource(src, key, page));
         } catch (e) {
           errors.add(
             SourceError(
@@ -107,11 +98,10 @@ Future<SearchReport> searchBooksDetailed(
 
 /// Searches novels from a single [source].
 Future<List<SearchBook>> searchFromSource(
-  BookSource source,
+  NovelSource source,
   String key,
-  int page, [
-  JsPool? jsPool,
-]) {
+  int page,
+) {
   return withSyncHttpBridge(() async {
     final aurl = AnalyzeUrl(
       source.searchUrl,
@@ -119,19 +109,14 @@ Future<List<SearchBook>> searchFromSource(
       page,
       source.bookSourceUrl,
       source.header,
-      jsPool,
     )..setComment(source.bookSourceComment);
 
-    final body = await aurl.getStrResponse(jsPool);
-    if (body.isEmpty) {
-      return const [];
-    }
+    final body = await aurl.getStrResponse();
+    if (body.isEmpty) return const [];
 
-    final ar = AnalyzeRule(body, aurl.finalUrl, jsPool);
+    final ar = AnalyzeRule(body, aurl.finalUrl);
     final bookListRule = source.ruleSearch.bookList;
-    if (bookListRule.isEmpty) {
-      return const [];
-    }
+    if (bookListRule.isEmpty) return const [];
 
     final bookItems = ar.getElements(bookListRule);
     if (bookItems.isEmpty) {
@@ -142,7 +127,7 @@ Future<List<SearchBook>> searchFromSource(
 
     final items = <SearchBook>[];
     for (final item in bookItems) {
-      final itemAr = AnalyzeRule(item, aurl.finalUrl, jsPool);
+      final itemAr = AnalyzeRule(item, aurl.finalUrl);
       var bookUrl = itemAr.getString(source.ruleSearch.bookUrl);
       var coverUrl = itemAr.getString(source.ruleSearch.coverUrl);
 

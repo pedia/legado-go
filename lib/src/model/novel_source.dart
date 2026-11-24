@@ -1,6 +1,6 @@
 import 'json_helpers.dart';
 
-/// Defines rules for parsing search results.
+/// Defines rules for parsing search and explore/discover results.
 class SearchRule {
   final String bookList;
   final String name;
@@ -52,8 +52,11 @@ class SearchRule {
   };
 }
 
+/// Explore/discover rules share the same schema as [SearchRule].
+typedef ExploreRule = SearchRule;
+
 /// Defines rules for parsing novel detail pages.
-class BookInfoRule {
+class NovelInfoRule {
   final String name;
   final String author;
   final String coverUrl;
@@ -64,7 +67,7 @@ class BookInfoRule {
   final String init;
   final String wordCount;
 
-  const BookInfoRule({
+  const NovelInfoRule({
     this.name = '',
     this.author = '',
     this.coverUrl = '',
@@ -76,9 +79,9 @@ class BookInfoRule {
     this.wordCount = '',
   });
 
-  factory BookInfoRule.fromJson(Map<String, dynamic>? json) {
-    if (json == null) return const BookInfoRule();
-    return BookInfoRule(
+  factory NovelInfoRule.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const NovelInfoRule();
+    return NovelInfoRule(
       name: jsonAsString(json['name']),
       author: jsonAsString(json['author']),
       coverUrl: jsonAsString(json['coverUrl']),
@@ -172,60 +175,11 @@ class ContentRule {
   };
 }
 
-/// Defines rules for explore/discover pages.
-class ExploreRule {
-  final String bookList;
-  final String name;
-  final String author;
-  final String bookUrl;
-  final String coverUrl;
-  final String intro;
-  final String kind;
-  final String lastChapter;
-  final String wordCount;
-
-  const ExploreRule({
-    this.bookList = '',
-    this.name = '',
-    this.author = '',
-    this.bookUrl = '',
-    this.coverUrl = '',
-    this.intro = '',
-    this.kind = '',
-    this.lastChapter = '',
-    this.wordCount = '',
-  });
-
-  factory ExploreRule.fromJson(Map<String, dynamic>? json) {
-    if (json == null) return const ExploreRule();
-    return ExploreRule(
-      bookList: jsonAsString(json['bookList']),
-      name: jsonAsString(json['name']),
-      author: jsonAsString(json['author']),
-      bookUrl: jsonAsString(json['bookUrl']),
-      coverUrl: jsonAsString(json['coverUrl']),
-      intro: jsonAsString(json['intro']),
-      kind: jsonAsString(json['kind']),
-      lastChapter: jsonAsString(json['lastChapter']),
-      wordCount: jsonAsString(json['wordCount']),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'bookList': bookList,
-    'name': name,
-    'author': author,
-    'bookUrl': bookUrl,
-    'coverUrl': coverUrl,
-    'intro': intro,
-    'kind': kind,
-    'lastChapter': lastChapter,
-    'wordCount': wordCount,
-  };
-}
-
-/// Represents a Legado book source JSON definition.
-class BookSource {
+/// Represents a Legado novel source JSON definition.
+///
+/// JSON field keys remain aligned with the Legado schema (`bookSourceName`,
+/// `ruleBookInfo`, etc.) for compatibility with existing source files.
+class NovelSource {
   final String bookSourceName;
   final String bookSourceUrl;
   final String bookSourceGroup;
@@ -240,13 +194,13 @@ class BookSource {
   final int customOrder;
   final int lastUpdateTime;
   final SearchRule ruleSearch;
-  final BookInfoRule ruleBookInfo;
+  final NovelInfoRule ruleNovelInfo;
   final TocRule ruleToc;
   final ContentRule ruleContent;
   final ExploreRule ruleExplore;
   final Object? exploreUrl;
 
-  const BookSource({
+  const NovelSource({
     this.bookSourceName = '',
     this.bookSourceUrl = '',
     this.bookSourceGroup = '',
@@ -261,14 +215,14 @@ class BookSource {
     this.customOrder = 0,
     this.lastUpdateTime = 0,
     this.ruleSearch = const SearchRule(),
-    this.ruleBookInfo = const BookInfoRule(),
+    this.ruleNovelInfo = const NovelInfoRule(),
     this.ruleToc = const TocRule(),
     this.ruleContent = const ContentRule(),
-    this.ruleExplore = const ExploreRule(),
+    this.ruleExplore = const SearchRule(),
     this.exploreUrl,
   });
 
-  factory BookSource.fromJson(Map<String, dynamic> json) => BookSource(
+  factory NovelSource.fromJson(Map<String, dynamic> json) => NovelSource(
     bookSourceName: jsonAsString(json['bookSourceName']),
     bookSourceUrl: jsonAsString(json['bookSourceUrl']),
     bookSourceGroup: jsonAsString(json['bookSourceGroup']),
@@ -283,10 +237,10 @@ class BookSource {
     customOrder: jsonAsInt(json['customOrder']),
     lastUpdateTime: jsonAsInt(json['lastUpdateTime']),
     ruleSearch: SearchRule.fromJson(jsonAsMap(json['ruleSearch'])),
-    ruleBookInfo: BookInfoRule.fromJson(jsonAsMap(json['ruleBookInfo'])),
+    ruleNovelInfo: NovelInfoRule.fromJson(jsonAsMap(json['ruleBookInfo'])),
     ruleToc: TocRule.fromJson(jsonAsMap(json['ruleToc'])),
     ruleContent: ContentRule.fromJson(jsonAsMap(json['ruleContent'])),
-    ruleExplore: ExploreRule.fromJson(jsonAsMap(json['ruleExplore'])),
+    ruleExplore: SearchRule.fromJson(jsonAsMap(json['ruleExplore'])),
     exploreUrl: json['exploreUrl'],
   );
 
@@ -305,7 +259,7 @@ class BookSource {
     'customOrder': customOrder,
     'lastUpdateTime': lastUpdateTime,
     'ruleSearch': ruleSearch.toJson(),
-    'ruleBookInfo': ruleBookInfo.toJson(),
+    'ruleBookInfo': ruleNovelInfo.toJson(),
     'ruleToc': ruleToc.toJson(),
     'ruleContent': ruleContent.toJson(),
     'ruleExplore': ruleExplore.toJson(),
@@ -314,5 +268,5 @@ class BookSource {
 
   @override
   String toString() =>
-      'BookSource(name: $bookSourceName, url: $bookSourceUrl, enabled: $enabled)';
+      'NovelSource(name: $bookSourceName, url: $bookSourceUrl, enabled: $enabled)';
 }

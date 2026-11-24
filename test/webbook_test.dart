@@ -6,7 +6,7 @@ import 'package:test/test.dart';
 void main() {
   late HttpServer mockSite;
   late String mockBaseUrl;
-  late BookSource mockSource;
+  late NovelSource mockSource;
 
   setUp(() async {
     mockSite = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -82,7 +82,7 @@ void main() {
       req.response.close();
     });
 
-    mockSource = BookSource(
+    mockSource = NovelSource(
       bookSourceName: 'MockBookSite',
       bookSourceUrl: mockBaseUrl,
       enabled: true,
@@ -97,7 +97,7 @@ void main() {
         kind: 'class.kind@text',
         lastChapter: 'class.last@text',
       ),
-      ruleBookInfo: const BookInfoRule(
+      ruleNovelInfo: const NovelInfoRule(
         name: 'class.book-name@text',
         author: 'class.book-author@text',
         coverUrl: 'class.cover@tag.img@src',
@@ -137,7 +137,7 @@ void main() {
   });
 
   test(
-    'End-to-end webbook flow: search -> getBookInfo -> chapters -> content',
+    'End-to-end webbook flow: search -> getNovelInfo -> chapters -> content',
     () async {
       final results = await searchBooks([mockSource], '斗破苍穹', 1);
       expect(results.length, 1);
@@ -146,7 +146,10 @@ void main() {
       expect(results.first.bookUrl, '$mockBaseUrl/book/1');
       expect(results.first.coverUrl, '$mockBaseUrl/cover/1.jpg');
 
-      final Novel? novel = await getBookInfo(mockSource, results.first.bookUrl);
+      final Novel? novel = await getNovelInfo(
+        mockSource,
+        results.first.bookUrl,
+      );
       expect(novel, isNotNull);
       expect(novel!.name, '斗破苍穹');
       expect(novel.intro, '三十年河东，三十年河西');
