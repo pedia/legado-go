@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -438,15 +439,38 @@ class AnalyzeUrl {
 
   /// Sends the HTTP request using `package:http` (`IOClient`) and returns
   /// the response body decoded according to [charset] (or hex when [type] is set).
-  Future<String> getStrResponse() async {
+  Future<String> getStrResponse({
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final effectiveTimeout = timeout <= Duration.zero
+        ? const Duration(seconds: 15)
+        : timeout;
+    final deadline = Stopwatch()..start();
+
+    Duration remainingTimeout() {
+      final rem = effectiveTimeout - deadline.elapsed;
+      if (rem <= Duration.zero) {
+        throw TimeoutException(
+          'HTTP request timed out ($finalUrl)',
+          effectiveTimeout,
+        );
+      }
+      return rem;
+    }
+
     if (jsCode.isNotEmpty) {
-      await withSyncHttpBridge(() async => _resolveJS());
+      await withSyncHttpBridge(
+        () async => _resolveJS(),
+      ).timeout(effectiveTimeout);
     }
     if (finalUrl.trim().isEmpty) {
       throw StateError('empty final url after analyzing rule "$ruleUrl"');
     }
 
-    final client = IOClient(_createHttpClient());
+    final rawHttpClient = _createHttpClient(
+      connectionTimeout: effectiveTimeout,
+    );
+    final client = IOClient(rawHttpClient);
     try {
       final attempts = (retry + 1) < 1 ? 1 : (retry + 1);
       http.StreamedResponse? response;
@@ -478,17 +502,15 @@ class AnalyzeUrl {
             headerMap.forEach((k, v) => req.headers[k] = v);
           }
 
-          final resp = await client
-              .send(req)
-              .timeout(const Duration(seconds: 30));
+          final resp = await client.send(req).timeout(remainingTimeout());
           if (resp.statusCode < 500 || i == attempts - 1) {
             response = resp;
             break;
           }
-          await resp.stream.drain<void>();
+          await resp.stream.drain<void>().timeout(remainingTimeout());
         } catch (e) {
           lastError = e;
-          if (i == attempts - 1) rethrow;
+          if (e is TimeoutException || i == attempts - 1) rethrow;
         }
       }
 
@@ -497,14 +519,14 @@ class AnalyzeUrl {
       }
 
       if (response.statusCode != HttpStatus.ok) {
-        await response.stream.drain<void>();
+        await response.stream.drain<void>().timeout(remainingTimeout());
         throw HttpException(
           'HTTP ${response.statusCode}: ${response.reasonPhrase ?? ''}',
           uri: Uri.parse(finalUrl),
         );
       }
 
-      final bytes = await response.stream.toBytes();
+      final bytes = await response.stream.toBytes().timeout(remainingTimeout());
 
       if (type.isNotEmpty) {
         return _bytesToHex(bytes);
@@ -517,14 +539,17 @@ class AnalyzeUrl {
       }
       return utf8.decode(bytes, allowMalformed: true);
     } finally {
+      rawHttpClient.close(force: true);
       client.close();
     }
   }
 
-  HttpClient _createHttpClient() {
+  HttpClient _createHttpClient({
+    Duration connectionTimeout = const Duration(seconds: 15),
+  }) {
     final client = HttpClient()
       ..badCertificateCallback = ((_, _, _) => true)
-      ..connectionTimeout = const Duration(seconds: 30);
+      ..connectionTimeout = connectionTimeout;
 
     if (proxy.isNotEmpty) {
       var proxyUrl = proxy.trim();

@@ -11,6 +11,7 @@ Future<Novel?> getNovelInfo(
   NovelSource source,
   String bookUrl, {
   GoproLogger? logger,
+  Duration timeout = const Duration(seconds: 15),
 }) {
   final log = logger ?? GoproLogger.silent;
   return withSyncHttpBridge(() async {
@@ -31,7 +32,7 @@ Future<Novel?> getNovelInfo(
         message: 'Fetching novel info -> ${aurl.finalUrl}',
       );
 
-      final body = await aurl.getStrResponse();
+      final body = await aurl.getStrResponse(timeout: timeout);
       if (body.isEmpty) {
         sw.stop();
         const msg = 'Empty HTTP response body';

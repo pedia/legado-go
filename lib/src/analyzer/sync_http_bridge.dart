@@ -68,6 +68,16 @@ Future<JsHttpResponse> executePackageHttpRequest({
   if (currentMethod.isEmpty) currentMethod = 'GET';
   var currentBody = body;
   const maxRedirects = 10;
+  final deadline = Stopwatch()..start();
+
+  Duration remainingTimeout() {
+    if (timeout <= Duration.zero) return const Duration(seconds: 15);
+    final rem = timeout - deadline.elapsed;
+    if (rem <= Duration.zero) {
+      throw TimeoutException('HTTP request timed out', timeout);
+    }
+    return rem;
+  }
 
   for (var hop = 0; hop <= maxRedirects; hop++) {
     final req = http.Request(currentMethod, currentUri)
@@ -77,7 +87,7 @@ Future<JsHttpResponse> executePackageHttpRequest({
       req.bodyBytes = utf8.encode(currentBody);
     }
 
-    final streamed = await client.send(req).timeout(timeout);
+    final streamed = await client.send(req).timeout(remainingTimeout());
     final statusCode = streamed.statusCode;
     final reason = streamed.reasonPhrase ?? '';
     final respHeaders = <String, String>{};
@@ -89,7 +99,7 @@ Future<JsHttpResponse> executePackageHttpRequest({
     if (followRedirect && _isRedirectStatus(statusCode) && hop < maxRedirects) {
       final location = streamed.headers['location'];
       if (location != null && location.isNotEmpty) {
-        await streamed.stream.drain<void>();
+        await streamed.stream.drain<void>().timeout(remainingTimeout());
         currentUri = currentUri.resolve(location);
         if (statusCode == HttpStatus.movedPermanently ||
             statusCode == HttpStatus.found ||
@@ -105,7 +115,7 @@ Future<JsHttpResponse> executePackageHttpRequest({
 
     final bytes = currentMethod == 'HEAD'
         ? const <int>[]
-        : await streamed.stream.toBytes();
+        : await streamed.stream.toBytes().timeout(remainingTimeout());
     return JsHttpResponse(
       body: currentMethod == 'HEAD'
           ? ''
@@ -133,11 +143,26 @@ bool _isRedirectStatus(int code) =>
 /// Runs [action] with an in-process [SyncHttpBridge] worker isolate active so
 /// synchronous JS HTTP/HTTPS calls execute cleanly via `package:http` without
 /// spawning external processes or leaving sockets open on exit.
-Future<T> withSyncHttpBridge<T>(Future<T> Function() action) async {
+Future<T> withSyncHttpBridge<T>(
+  Future<T> Function() action, {
+  Duration? timeout,
+}) async {
+  final prevTimeout = SyncHttpBridge.defaultTimeout;
+  if (timeout != null && timeout > Duration.zero) {
+    SyncHttpBridge.defaultTimeout = timeout;
+  }
+  if (SyncHttpBridge.externalPort != null) {
+    try {
+      return await action();
+    } finally {
+      SyncHttpBridge.defaultTimeout = prevTimeout;
+    }
+  }
   await SyncHttpBridge.acquire();
   try {
     return await action();
   } finally {
+    SyncHttpBridge.defaultTimeout = prevTimeout;
     await SyncHttpBridge.release();
   }
 }
@@ -149,6 +174,13 @@ class SyncHttpBridge {
   static Future<SyncHttpBridge>? _starting;
   static SyncHttpBridge? _active;
 
+  /// Optional external bridge port used inside worker isolates to share the
+  /// parent isolate's bridge server without spawning extra bridge isolates.
+  static int? externalPort;
+
+  /// Default timeout applied to synchronous JS HTTP requests in this isolate.
+  static Duration defaultTimeout = const Duration(seconds: 15);
+
   final int port;
   final SendPort _controlPort;
   final Isolate _isolate;
@@ -156,7 +188,7 @@ class SyncHttpBridge {
   SyncHttpBridge._(this.port, this._controlPort, this._isolate);
 
   /// Port of the active in-process bridge, or `null` if none is running.
-  static int? get activePort => _active?.port;
+  static int? get activePort => _active?.port ?? externalPort;
 
   /// Acquires the shared bridge, starting it if needed.
   static Future<void> acquire() async {
@@ -203,12 +235,37 @@ class SyncHttpBridge {
     required String body,
     required Map<String, String> headers,
     required bool followRedirect,
+    Duration? timeout,
   }) {
+    return requestSyncOnPort(
+      port,
+      method: method,
+      url: url,
+      body: body,
+      headers: headers,
+      followRedirect: followRedirect,
+      timeout: timeout ?? defaultTimeout,
+    );
+  }
+
+  /// Sends one synchronous HTTP(S) request to a bridge running on [targetPort].
+  static JsHttpResponse requestSyncOnPort(
+    int targetPort, {
+    required String method,
+    required String url,
+    required String body,
+    required Map<String, String> headers,
+    required bool followRedirect,
+    Duration timeout = const Duration(seconds: 15),
+  }) {
+    final effectiveTimeout = timeout <= Duration.zero
+        ? const Duration(seconds: 15)
+        : timeout;
     RawSynchronousSocket? socket;
     try {
       socket = RawSynchronousSocket.connectSync(
         InternetAddress.loopbackIPv4,
-        port,
+        targetPort,
       );
       final payload = utf8.encode(
         jsonEncode({
@@ -217,6 +274,7 @@ class SyncHttpBridge {
           'body': body,
           'headers': headers,
           'followRedirect': followRedirect,
+          'timeoutMs': effectiveTimeout.inMilliseconds,
         }),
       );
       final lenHeader = Uint8List(4)
@@ -224,11 +282,14 @@ class SyncHttpBridge {
       socket.writeFromSync(lenHeader);
       socket.writeFromSync(payload);
 
-      final respLenBytes = _readExactSync(socket, 4);
+      final deadline = DateTime.now().add(
+        effectiveTimeout + const Duration(seconds: 2),
+      );
+      final respLenBytes = _readExactSync(socket, 4, deadline: deadline);
       final respLen = Uint8List.fromList(
         respLenBytes,
       ).buffer.asByteData().getUint32(0, Endian.big);
-      final respBytes = _readExactSync(socket, respLen);
+      final respBytes = _readExactSync(socket, respLen, deadline: deadline);
       final decoded =
           jsonDecode(utf8.decode(respBytes, allowMalformed: true))
               as Map<String, dynamic>;
@@ -288,21 +349,34 @@ Future<void> _bridgeWorkerIsolate(SendPort readySend) async {
         rawHdrs.forEach((k, v) => headers[k.toString()] = v.toString());
       }
 
+      final timeoutMs = (cfg['timeoutMs'] as num?)?.toInt() ?? 15000;
+      final reqTimeout = Duration(
+        milliseconds: timeoutMs <= 0 ? 15000 : timeoutMs,
+      );
+
       JsHttpResponse resp;
+      final reqHttpClient = HttpClient()
+        ..badCertificateCallback = ((_, _, _) => true)
+        ..connectionTimeout = reqTimeout;
+      final reqClient = IOClient(reqHttpClient);
       try {
         resp = await executePackageHttpRequest(
-          client: client,
+          client: reqClient,
           method: (cfg['method'] ?? 'GET').toString(),
           url: (cfg['url'] ?? '').toString(),
           body: (cfg['body'] ?? '').toString(),
           headers: headers,
           followRedirect: cfg['followRedirect'] == true,
-        );
+          timeout: reqTimeout,
+        ).timeout(reqTimeout);
       } catch (e) {
+        reqHttpClient.close(force: true);
         resp = JsHttpResponse(
           url: (cfg['url'] ?? '').toString(),
           status: e.toString(),
         );
+      } finally {
+        reqHttpClient.close(force: true);
       }
 
       final respPayload = utf8.encode(jsonEncode(resp.toJson()));
@@ -355,14 +429,16 @@ JsHttpResponse syncHttpRequest({
   required Map<String, String> headers,
   required bool followRedirect,
 }) {
-  final activeBridge = SyncHttpBridge._active;
-  if (activeBridge != null) {
-    return activeBridge.requestSync(
+  final bridgePort = SyncHttpBridge.activePort;
+  if (bridgePort != null) {
+    return SyncHttpBridge.requestSyncOnPort(
+      bridgePort,
       method: method,
       url: url,
       body: body,
       headers: headers,
       followRedirect: followRedirect,
+      timeout: SyncHttpBridge.defaultTimeout,
     );
   }
 
@@ -448,7 +524,11 @@ JsHttpResponse syncPlainHttpRequest({
         socket.writeFromSync(bodyBytes);
       }
 
-      final rawBytes = _readHttpResponseSync(socket, method: currentMethod);
+      final rawBytes = _readHttpResponseSync(
+        socket,
+        method: currentMethod,
+        deadline: DateTime.now().add(const Duration(seconds: 15)),
+      );
       final parsed = _parseRawHttpResponse(
         rawBytes,
         url: currentUri.toString(),
@@ -494,10 +574,24 @@ String _requestTarget(Uri uri) {
   return uri.hasQuery ? '$path?${uri.query}' : path;
 }
 
-List<int> _readExactSync(RawSynchronousSocket socket, int length) {
+void _waitForSocketData(RawSynchronousSocket socket, DateTime? deadline) {
+  while (socket.available() == 0) {
+    if (deadline != null && DateTime.now().isAfter(deadline)) {
+      throw TimeoutException('Synchronous socket read timed out');
+    }
+    sleep(const Duration(milliseconds: 5));
+  }
+}
+
+List<int> _readExactSync(
+  RawSynchronousSocket socket,
+  int length, {
+  DateTime? deadline,
+}) {
   final result = Uint8List(length);
   var offset = 0;
   while (offset < length) {
+    _waitForSocketData(socket, deadline);
     final read = socket.readIntoSync(result, offset, length);
     if (read <= 0) {
       throw const HttpException('Unexpected EOF reading framed message');
@@ -510,10 +604,12 @@ List<int> _readExactSync(RawSynchronousSocket socket, int length) {
 Uint8List _readHttpResponseSync(
   RawSynchronousSocket socket, {
   required String method,
+  DateTime? deadline,
 }) {
   final buf = Uint8List(8192);
   final out = BytesBuilder(copy: false);
   while (true) {
+    _waitForSocketData(socket, deadline);
     final read = socket.readIntoSync(buf);
     if (read <= 0) break;
     out.add(Uint8List.sublistView(buf, 0, read));

@@ -208,6 +208,11 @@ void main() {
 </body></html>''');
         } else if (path == '/content/empty-extract') {
           req.response.write('<html><body><div>无匹配规则</div></body></html>');
+        } else if (path == '/stall-body') {
+          req.response.statusCode = HttpStatus.ok;
+          req.response.write('<html><body>headers-only');
+          req.response.flush();
+          return;
         } else {
           req.response.statusCode = HttpStatus.notFound;
         }
@@ -563,6 +568,208 @@ void main() {
         expect(errOut, contains('failures=[httpStatus=1]'));
       },
       timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'stalled response body times out cleanly and watchdog reports hung source',
+      () async {
+        final stallServer = await HttpServer.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(() => stallServer.close(force: true));
+        final stallBaseUrl = 'http://127.0.0.1:${stallServer.port}';
+
+        stallServer.listen((req) async {
+          if (req.uri.path == '/stall-body') {
+            req.response.statusCode = HttpStatus.ok;
+            req.response.headers.contentType = ContentType.html;
+            req.response.write('<html><body>partial ');
+            await req.response.flush();
+            // Intentionally keep the stream open without closing to simulate a tarpit.
+            return;
+          }
+          req.response.headers.contentType = ContentType.html;
+          req.response.write(
+            '<html><body><ul class="books"><li><a class="t" href="/b/1">快书</a></li></ul></body></html>',
+          );
+          await req.response.close();
+        });
+
+        final fastSrc = NovelSource(
+          bookSourceName: 'FastSource',
+          bookSourceUrl: stallBaseUrl,
+          enabled: true,
+          searchUrl: '/fast?q={{key}}',
+          ruleSearch: const SearchRule(
+            bookList: 'class.books@tag.li',
+            name: 'class.t@text',
+            bookUrl: 'class.t@href',
+          ),
+        );
+        final stalledSrc = NovelSource(
+          bookSourceName: 'StalledBodySource',
+          bookSourceUrl: stallBaseUrl,
+          enabled: true,
+          searchUrl: '/stall-body?q={{key}}',
+          ruleSearch: const SearchRule(
+            bookList: 'class.books@tag.li',
+            name: 'class.t@text',
+          ),
+        );
+
+        final logger = GoproLogger(
+          minLevel: LogLevel.debug,
+          collectEntries: true,
+        );
+        final sw = Stopwatch()..start();
+        final report = await searchBooksDetailed(
+          [fastSrc, stalledSrc],
+          'test',
+          1,
+          2,
+          logger,
+          const Duration(milliseconds: 450),
+          const Duration(milliseconds: 120),
+        );
+        sw.stop();
+
+        expect(report.results.length, 1);
+        expect(report.errors.length, 1);
+        expect(report.errors.single.category, FailureCategory.timeout);
+        expect(stalledSrc.stats.failedCount, 1);
+        expect(stalledSrc.stats.lastFailureCategory, FailureCategory.timeout);
+        expect(sw.elapsedMilliseconds, lessThan(3000));
+
+        expect(
+          logger.entries.any(
+            (e) =>
+                e.sourceName == 'watchdog' &&
+                e.message.contains('StalledBodySource') &&
+                e.message.contains('http-request'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'CLI --timeout and --source filter isolate and bound hung sources',
+      () async {
+        final stallServer = await HttpServer.bind(
+          InternetAddress.loopbackIPv4,
+          0,
+        );
+        addTearDown(() => stallServer.close(force: true));
+        final stallBaseUrl = 'http://127.0.0.1:${stallServer.port}';
+
+        stallServer.listen((req) async {
+          req.response.statusCode = HttpStatus.ok;
+          req.response.write('<html><body>headers-only');
+          await req.response.flush();
+          // Intentionally never close to trigger CLI --timeout=1.
+        });
+
+        final tempDir = Directory.systemTemp.createTempSync('gopro_to_cli_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+
+        final sourcesFile = File('${tempDir.path}/sources.json');
+        final s1 = NovelSource(
+          bookSourceName: 'SkipSource',
+          bookSourceUrl: stallBaseUrl,
+          enabled: true,
+          searchUrl: '/skip?q={{key}}',
+        );
+        final s2 = NovelSource(
+          bookSourceName: 'TargetHungSource',
+          bookSourceUrl: stallBaseUrl,
+          enabled: true,
+          searchUrl: '/hung?q={{key}}',
+        );
+        sourcesFile.writeAsStringSync(jsonEncode([s1.toJson(), s2.toJson()]));
+
+        final res = await Process.run('dart', [
+          'run',
+          'bin/gopro.dart',
+          '-t',
+          '1',
+          '-c',
+          '4',
+          '-s',
+          'TargetHung',
+          '-l',
+          'info',
+          sourcesFile.path,
+          'search',
+          '青山',
+        ]);
+
+        expect(res.exitCode, 0, reason: 'stderr:\n${res.stderr}');
+        expect(jsonDecode(res.stdout.toString()), isEmpty);
+        final errOut = res.stderr.toString();
+        expect(errOut, contains('Loaded 1 enabled sources (filtered from 2)'));
+        expect(errOut, contains('TargetHungSource'));
+        expect(errOut, contains('failures=[timeout=1]'));
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+
+    test(
+      'synchronous java.connect hang in one source is killed at timeout without blocking fast sources',
+      () async {
+        final fastSrc = NovelSource(
+          bookSourceName: 'FastAfterJsHang',
+          bookSourceUrl: baseUrl,
+          enabled: true,
+          searchUrl: '/ok/search?q={{key}}',
+          ruleSearch: const SearchRule(
+            bookList: 'class.books@tag.li',
+            name: 'class.title@text',
+            author: 'class.author@text',
+            bookUrl: 'class.title@href',
+          ),
+        );
+        final jsHangSrc = NovelSource(
+          bookSourceName: 'HungJavaConnectSource',
+          bookSourceUrl: baseUrl,
+          enabled: true,
+          searchUrl:
+              '{{(function(){for(var i=0;i<3;i++){java.connect("$baseUrl/stall-body");}return "";})()}}/ok/search?q={{key}}',
+          ruleSearch: const SearchRule(bookList: 'class.books@tag.li'),
+        );
+
+        final logger = GoproLogger(
+          minLevel: LogLevel.warn,
+          collectEntries: true,
+        );
+        final sw = Stopwatch()..start();
+        final report = await searchBooksDetailed(
+          [jsHangSrc, fastSrc],
+          '测试',
+          1,
+          2,
+          logger,
+          const Duration(milliseconds: 400),
+          const Duration(milliseconds: 120),
+        );
+        sw.stop();
+
+        expect(report.results.length, 1);
+        expect(report.results.single.originName, 'FastAfterJsHang');
+        expect(report.errors.length, 1);
+        expect(report.errors.single.category, FailureCategory.timeout);
+        expect(jsHangSrc.stats.failedCount, 1);
+        expect(jsHangSrc.stats.lastFailureCategory, FailureCategory.timeout);
+        expect(sw.elapsedMilliseconds, lessThan(4000));
+        expect(
+          logger.entries.any(
+            (e) =>
+                e.sourceName == 'watchdog' &&
+                e.message.contains('HungJavaConnectSource'),
+          ),
+          isTrue,
+        );
+      },
     );
   });
 }

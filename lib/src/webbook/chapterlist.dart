@@ -12,6 +12,7 @@ Future<List<BookChapter>> getChapterList(
   NovelSource source,
   Novel novel, {
   GoproLogger? logger,
+  Duration timeout = const Duration(seconds: 15),
 }) {
   final log = logger ?? GoproLogger.silent;
   return withSyncHttpBridge(() async {
@@ -59,7 +60,7 @@ Future<List<BookChapter>> getChapterList(
       );
 
       try {
-        final pageResult = await _parseChapterPage(source, tocUrl);
+        final pageResult = await _parseChapterPage(source, tocUrl, timeout);
         pagesFetched++;
         allChapters.addAll(pageResult.chapters);
         if (i == 0 && pageResult.issueMessage != null) {
@@ -156,10 +157,10 @@ Future<
     String? issueMessage,
   })
 >
-_parseChapterPage(NovelSource source, String pageUrl) async {
+_parseChapterPage(NovelSource source, String pageUrl, Duration timeout) async {
   final aurl = AnalyzeUrl(pageUrl, '', 0, source.bookSourceUrl, source.header);
 
-  final body = await aurl.getStrResponse();
+  final body = await aurl.getStrResponse(timeout: timeout);
   if (body.isEmpty) {
     return (
       chapters: const <BookChapter>[],

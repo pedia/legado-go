@@ -14,6 +14,7 @@ Future<String> getContent(
   Novel novel,
   BookChapter chapter, {
   GoproLogger? logger,
+  Duration timeout = const Duration(seconds: 15),
 }) {
   final log = logger ?? GoproLogger.silent;
   return withSyncHttpBridge(() async {
@@ -61,7 +62,7 @@ Future<String> getContent(
       );
 
       try {
-        final pageResult = await _parseContentPage(source, currentUrl);
+        final pageResult = await _parseContentPage(source, currentUrl, timeout);
         pagesFetched++;
         if (pageResult.content.isNotEmpty) {
           contentParts.add(pageResult.content);
@@ -156,10 +157,10 @@ Future<
     String? issueMessage,
   })
 >
-_parseContentPage(NovelSource source, String pageUrl) async {
+_parseContentPage(NovelSource source, String pageUrl, Duration timeout) async {
   final aurl = AnalyzeUrl(pageUrl, '', 0, source.bookSourceUrl, source.header);
 
-  final body = await aurl.getStrResponse();
+  final body = await aurl.getStrResponse(timeout: timeout);
   if (body.isEmpty) {
     return (
       content: '',

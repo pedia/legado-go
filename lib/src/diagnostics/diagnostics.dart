@@ -327,7 +327,7 @@ abstract final class FailureClassifier {
       }
       return FailureCategory.network;
     }
-    if (error is FormatException) {
+    if (error is FormatException || error is ArgumentError) {
       return FailureCategory.parseOrScript;
     }
 

@@ -13,6 +13,23 @@ Future<void> main(List<String> arguments) async {
       help: 'Search result page number.',
     )
     ..addOption(
+      'timeout',
+      abbr: 't',
+      defaultsTo: '15',
+      help: 'Per-source timeout in seconds (0 uses default 15s HTTP timeout).',
+    )
+    ..addOption(
+      'concurrency',
+      abbr: 'c',
+      defaultsTo: '20',
+      help: 'Maximum concurrent sources searched in parallel.',
+    )
+    ..addOption(
+      'source',
+      abbr: 's',
+      help: 'Filter sources by case-insensitive name or URL substring.',
+    )
+    ..addOption(
       'log-level',
       abbr: 'l',
       defaultsTo: 'warn',
@@ -69,27 +86,60 @@ Future<void> main(List<String> arguments) async {
   }
 
   final page = int.tryParse(parsed['page'] as String) ?? 1;
+  final timeoutSeconds = int.tryParse(parsed['timeout'] as String);
+  if (timeoutSeconds == null || timeoutSeconds < 0) {
+    stderr.writeln('Error: --timeout must be a non-negative integer.');
+    exit(64);
+  }
+  final concurrency = int.tryParse(parsed['concurrency'] as String);
+  if (concurrency == null || concurrency <= 0) {
+    stderr.writeln('Error: --concurrency must be a positive integer.');
+    exit(64);
+  }
+
   final keyword = rest.sublist(2).join(' ');
+  final sourceFilter = (parsed['source'] as String?)?.trim().toLowerCase();
   final verbose = parsed['verbose'] as bool;
   final showSummary = parsed['summary'] as bool;
   final logLevel = verbose
       ? LogLevel.debug
       : LogLevel.parse(parsed['log-level'] as String);
 
-  final List<NovelSource> sources;
+  final List<NovelSource> loadedSources;
   try {
-    sources = await loadSources(jsonFile);
+    loadedSources = await loadSources(jsonFile);
   } catch (e) {
     stderr.writeln('Failed to load sources: $e');
     exit(1);
   }
 
-  stderr.writeln('Loaded ${sources.length} enabled sources');
+  final sources = (sourceFilter == null || sourceFilter.isEmpty)
+      ? loadedSources
+      : [
+          for (final s in loadedSources)
+            if (s.bookSourceName.toLowerCase().contains(sourceFilter) ||
+                s.bookSourceUrl.toLowerCase().contains(sourceFilter))
+              s,
+        ];
+
+  final timeout = Duration(seconds: timeoutSeconds);
+  stderr.writeln(
+    'Loaded ${sources.length} enabled sources'
+    '${sourceFilter != null && sourceFilter.isNotEmpty ? " (filtered from ${loadedSources.length})" : ""}'
+    ' (concurrency=$concurrency, timeout=${timeoutSeconds == 0 ? "15s-http" : "${timeoutSeconds}s"})',
+  );
   stderr.writeln('Searching for: $keyword');
 
   final logger = GoproLogger.stderr(minLevel: logLevel);
   final sw = Stopwatch()..start();
-  final report = await searchBooksDetailed(sources, keyword, page, 10, logger);
+  final report = await searchBooksDetailed(
+    sources,
+    keyword,
+    page,
+    concurrency,
+    logger,
+    timeout,
+  );
   sw.stop();
 
   stderr.writeln(
@@ -119,6 +169,7 @@ Usage:
 Options:
 ${parser.usage}
 
-Example:
-  dart run bin/gopro.dart -l info doc/example.json search "斗破苍穹"''');
+Examples:
+  dart run bin/gopro.dart -v -t 8 -c 20 doc/example.json search "斗破苍穹"
+  dart run bin/gopro.dart -v -s 顶点 doc/example.json search "青山"''');
 }
